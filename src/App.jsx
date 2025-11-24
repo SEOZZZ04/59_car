@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw } from 'lucide-react';
+import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -45,7 +45,6 @@ const getFirebaseConfig = () => {
   };
 };
 
-// 중복 초기화 방지
 const app = !getApps().length ? initializeApp(getFirebaseConfig()) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -288,7 +287,8 @@ const HistoryModal = ({ onClose, user }) => {
   const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
 
   useEffect(() => {
-    if (!db || !user) return;
+    // !user 체크 제거: 게스트 모드에서도 데이터 조회 허용 (Firestore 규칙이 true이므로)
+    if (!db) return;
     const q = query(getCollection("history"), orderBy("timestamp", "desc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -395,7 +395,8 @@ const CrewModal = ({ onClose, user }) => {
     const [nco, setNco] = useState({ name: '', rank: '하사' });
     const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
     useEffect(() => {
-        if (!db || !user) return;
+        // !user 체크 제거
+        if (!db) return;
         const unsub = onSnapshot(getDocRef("settings", "crew"), (doc) => {
             if (doc.exists()) { setDriver(doc.data().driver); setNco(doc.data().nco); }
         });
@@ -427,7 +428,8 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!db || !user) { alert("연결 대기중..."); return; }
+        // !user 제거: 게스트도 쓰기 가능
+        if (!db) { alert("연결 대기중..."); return; }
         if(!form.name || form.pin.length !== 4) { alert('이름과 4자리 비밀번호를 입력해주세요.'); return; }
 
         try {
@@ -465,9 +467,8 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 
 export default function App() {
   const [user, setUser] = useState(null); 
+  const [isGuest, setIsGuest] = useState(false); // 게스트 모드 상태
   const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState(null);
-  const [retryCount, setRetryCount] = useState(0);
 
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
@@ -487,10 +488,9 @@ export default function App() {
 
   const ranks = ['이병', '일병', '상병', '병장'];
 
-  // 0. Firebase 인증
-  const initAuth = async () => {
-      setAuthLoading(true);
-      setAuthError(null);
+  // 0. Firebase 인증 (자동 게스트 모드 전환 로직 포함)
+  useEffect(() => {
+    const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
            await signInWithCustomToken(auth, __initial_auth_token);
@@ -498,63 +498,51 @@ export default function App() {
            await signInAnonymously(auth);
         }
       } catch (e) {
-        console.error("Auth failed:", e);
-        if (e.code === 'auth/admin-restricted-operation') {
-          setAuthError('설정 오류: Firebase 콘솔에서 "익명(Anonymous)" 로그인이 비활성화되어 있습니다. 콘솔의 Authentication > Sign-in method 탭에서 활성화해주세요.');
-        } else if (e.code === 'auth/unauthorized-domain') {
-          setAuthError('도메인 오류: Firebase 콘솔 > Authentication > Settings > Authorized Domains에 현재 도메인을 추가하세요.');
-        } else if (e.code === 'auth/operation-not-allowed') {
-          setAuthError('권한 오류: Firebase 콘솔에서 익명 로그인이 비활성화되어 있습니다.');
-        } else {
-          // 기타 에러 시 상세 내용 출력 (API 키 제한 등 확인 유도)
-          setAuthError(`연결 오류: ${e.message} (Google Cloud Console에서 API 키 제한을 확인하세요)`);
-        }
+        console.warn("Auth failed, switching to Guest Mode:", e);
+        // 인증 실패 시 게스트 유저로 설정하여 앱 실행 보장
+        // (Firestore 규칙이 true이므로 데이터 접근 가능)
+        setUser({ uid: "guest_user", isAnonymous: true });
+        setIsGuest(true);
       } finally {
         setAuthLoading(false);
       }
-  };
-
-  useEffect(() => {
+    };
     initAuth();
     
     const unsubscribe = onAuthStateChanged(auth, (u) => {
         if (u) {
             setUser(u);
-            setAuthError(null);
+            setIsGuest(false);
         }
+        // 이미 게스트 모드라면 덮어쓰지 않음
         setAuthLoading(false);
     });
     return () => unsubscribe();
-  }, [retryCount]); // retryCount가 변경되면 다시 시도
+  }, []);
 
   // 1. 데이터 리스너
   useEffect(() => {
-    if (!user || !db) return;
-
-    const handleError = (err) => {
-      console.error("Data fetch error:", err);
-      if (err.code === 'permission-denied') {
-        setAuthError('권한 오류: 데이터베이스 접근 권한이 없습니다. (규칙을 확인하세요)');
-      }
-    };
+    // !user 체크 제거: 게스트 모드에서도 작동하도록 수정
+    if (!db) return;
 
     const unsub1 = onSnapshot(query(getCollection("applicants"), orderBy("timestamp", "asc")), 
         (snap) => setApplicants(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-        handleError
+        (err) => console.error("Applicants load error:", err)
     );
     
     const unsub2 = onSnapshot(query(getCollection("packages"), orderBy("timestamp", "asc")), 
         (snap) => setPackages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-        handleError
+        (err) => console.error("Packages load error:", err)
     );
 
     return () => { unsub1(); unsub2(); };
-  }, [user]);
+  }, [user]); // user가 변경될 때 리스너 재설정
 
   // 2. 자동 아카이빙
   useEffect(() => {
       const checkArchive = async () => {
-        if (!user || !db) return;
+        // !user 제거
+        if (!db) return;
         try {
             const today = new Date().toLocaleDateString();
             const sysRef = getDocRef("settings", "system");
@@ -568,13 +556,12 @@ export default function App() {
             }
         } catch (e) { console.warn("Auto-archive skipped:", e); }
       };
-      if (user) checkArchive();
-  }, [user]);
+      if (user || isGuest) checkArchive(); // 유저가 있거나 게스트면 실행
+  }, [user, isGuest]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (authError) { alert(`오류: ${authError}`); return; }
-    if (!db || !user) { alert("잠시만 기다려주세요 (서버 연결 중)"); return; }
+    if (!db) { alert("잠시만 기다려주세요 (서버 연결 중)"); return; }
     if (!name || pin.length !== 4) { alert('이름과 비밀번호 4자리를 입력해주세요.'); return; }
     try {
         await addDoc(getCollection("applicants"), {
@@ -588,7 +575,7 @@ export default function App() {
   };
 
   const confirmCancel = async (id, targetPin, type) => {
-    if (!db || !user) return;
+    if (!db) return;
     if (cancelPin === targetPin) {
       try {
           const colName = type === 'package' ? "packages" : "applicants";
@@ -611,39 +598,6 @@ export default function App() {
       );
   }
 
-  // 에러 발생 시 안내 화면
-  if (authError) {
-      return (
-          <div className="flex flex-col items-center justify-center min-h-screen bg-[#F2F4F6] p-6 text-center">
-              <WifiOff className="w-16 h-16 text-red-400 mb-4" />
-              <h2 className="text-xl font-bold text-slate-800 mb-2">서버 연결 실패</h2>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-red-100 max-w-lg text-left">
-                  <div className="flex items-start gap-3 mb-4">
-                      <AlertCircle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
-                      <div>
-                          <p className="text-red-600 font-bold text-sm mb-1">오류 원인: {authError}</p>
-                      </div>
-                  </div>
-                  
-                  <div className="bg-slate-50 p-4 rounded-lg text-xs text-slate-600 space-y-2 mb-4">
-                    <p className="font-bold mb-1">[해결 방법 가이드]</p>
-                    <p>1. <b>Firebase Console</b> 접속 &gt; 해당 프로젝트 선택</p>
-                    <p>2. 좌측 메뉴 <b>Authentication</b> &gt; <b>Sign-in method</b> 탭 클릭</p>
-                    <p>3. <b>익명(Anonymous)</b> 항목을 찾아 '사용 설정(Enabled)'으로 변경 후 저장</p>
-                    <p className="pt-2 text-gray-400">※ 그래도 안 된다면? Google Cloud Console에서 API 키 제한(Identity Toolkit API 포함 여부)을 확인하세요.</p>
-                  </div>
-
-                  <button 
-                    onClick={() => setRetryCount(c => c + 1)}
-                    className="w-full flex items-center justify-center gap-2 bg-slate-800 text-white py-3 rounded-lg font-bold hover:bg-slate-700 transition-colors"
-                  >
-                    <RefreshCw className="w-4 h-4" /> 설정 완료 후 재시도
-                  </button>
-              </div>
-          </div>
-      );
-  }
-
   return (
     <div className="min-h-screen bg-[#F2F4F6] text-[#191F28] font-sans pb-32 relative">
       <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-blue-100/50 to-transparent pointer-events-none" />
@@ -652,7 +606,14 @@ export default function App() {
             <h1 className="text-lg font-bold text-slate-800">59전대 복지차</h1>
             <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border"><History className="w-4 h-4" /></button>
         </div>
-        <StatusBadge />
+        <div className="flex items-center gap-2">
+            {isGuest && (
+                <span className="text-[10px] text-gray-500 bg-gray-200 px-2 py-1 rounded-full flex items-center gap-1">
+                    <WifiOff className="w-3 h-3"/> 게스트 모드
+                </span>
+            )}
+            <StatusBadge />
+        </div>
       </header>
 
       <div className="pt-16 relative">

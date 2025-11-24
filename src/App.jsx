@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff } from 'lucide-react';
+import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -28,17 +28,12 @@ import {
 } from "firebase/firestore";
 
 // ---------------------------------------------------------
-// [설정] Firebase 초기화 (안정성 강화 버전)
+// [설정] Firebase 초기화
 // ---------------------------------------------------------
 const getFirebaseConfig = () => {
-  // 1. 미리보기 환경 (Gemini Preview) 감지
   if (typeof __firebase_config !== 'undefined') {
     return JSON.parse(__firebase_config);
   }
-  
-  // 2. 로컬 개발 환경 또는 배포 환경용 (사용자 설정)
-  // 주의: Firebase 콘솔 > Authentication > Settings > Authorized Domains에 
-  // 현재 호스팅 도메인이 등록되어 있어야 로그인이 작동합니다.
   return {
     apiKey: "AIzaSyApqIy9DDNZEIb5MIUdWGWSXpRfZtxc1u4",
     authDomain: "car-352f0.firebaseapp.com",
@@ -50,18 +45,16 @@ const getFirebaseConfig = () => {
   };
 };
 
-// 앱이 이미 초기화되었는지 확인 (중복 초기화 방지)
+// 중복 초기화 방지
 const app = !getApps().length ? initializeApp(getFirebaseConfig()) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Gemini 환경 변수: 앱별 격리된 경로 사용 (없으면 기본값)
+// Gemini 환경 변수
 const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 // --- Helper: 컬렉션 참조 함수 ---
-// 데이터 경로 충돌 방지를 위해 환경에 맞는 경로를 생성합니다.
 const getCollection = (colName) => {
-  // 공용 데이터 경로 (규칙 준수)
   return collection(db, 'artifacts', APP_ID, 'public', 'data', colName);
 };
 
@@ -473,7 +466,8 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 export default function App() {
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState(null); // 인증 에러 상태
+  const [authError, setAuthError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
@@ -493,9 +487,10 @@ export default function App() {
 
   const ranks = ['이병', '일병', '상병', '병장'];
 
-  // 0. Firebase 인증 (앱 시작 시 필수) - 수정된 로직
-  useEffect(() => {
-    const initAuth = async () => {
+  // 0. Firebase 인증
+  const initAuth = async () => {
+      setAuthLoading(true);
+      setAuthError(null);
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
            await signInWithCustomToken(auth, __initial_auth_token);
@@ -504,38 +499,40 @@ export default function App() {
         }
       } catch (e) {
         console.error("Auth failed:", e);
-        // 에러 원인 분석
-        if (e.code === 'auth/unauthorized-domain') {
-          setAuthError('도메인 인증 오류: Firebase 콘솔에서 현재 도메인을 승인해주세요.');
-        } else if (e.code === 'auth/api-key-not-valid') {
-          setAuthError('API 키 오류: 유효하지 않은 Firebase API 키입니다.');
+        if (e.code === 'auth/admin-restricted-operation') {
+          setAuthError('설정 오류: Firebase 콘솔에서 "익명(Anonymous)" 로그인이 비활성화되어 있습니다. 콘솔의 Authentication > Sign-in method 탭에서 활성화해주세요.');
+        } else if (e.code === 'auth/unauthorized-domain') {
+          setAuthError('도메인 오류: Firebase 콘솔 > Authentication > Settings > Authorized Domains에 현재 도메인을 추가하세요.');
+        } else if (e.code === 'auth/operation-not-allowed') {
+          setAuthError('권한 오류: Firebase 콘솔에서 익명 로그인이 비활성화되어 있습니다.');
         } else {
-          setAuthError(`연결 오류: ${e.message}`);
+          // 기타 에러 시 상세 내용 출력 (API 키 제한 등 확인 유도)
+          setAuthError(`연결 오류: ${e.message} (Google Cloud Console에서 API 키 제한을 확인하세요)`);
         }
       } finally {
         setAuthLoading(false);
       }
-    };
+  };
+
+  useEffect(() => {
     initAuth();
     
     const unsubscribe = onAuthStateChanged(auth, (u) => {
         if (u) {
             setUser(u);
-            setAuthError(null); // 성공 시 에러 클리어
+            setAuthError(null);
         }
         setAuthLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [retryCount]); // retryCount가 변경되면 다시 시도
 
-  // 1. 데이터 리스너 (User 확인 후 실행)
+  // 1. 데이터 리스너
   useEffect(() => {
     if (!user || !db) return;
 
-    // 에러 발생 시 처리 핸들러 추가
     const handleError = (err) => {
       console.error("Data fetch error:", err);
-      // 권한 오류가 발생하면 인증 에러로 표시
       if (err.code === 'permission-denied') {
         setAuthError('권한 오류: 데이터베이스 접근 권한이 없습니다. (규칙을 확인하세요)');
       }
@@ -576,7 +573,7 @@ export default function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (authError) { alert(`오류 발생: ${authError}`); return; }
+    if (authError) { alert(`오류: ${authError}`); return; }
     if (!db || !user) { alert("잠시만 기다려주세요 (서버 연결 중)"); return; }
     if (!name || pin.length !== 4) { alert('이름과 비밀번호 4자리를 입력해주세요.'); return; }
     try {
@@ -614,18 +611,34 @@ export default function App() {
       );
   }
 
-  // 에러 발생 시 전체 화면 차단 및 메시지 표시
+  // 에러 발생 시 안내 화면
   if (authError) {
       return (
           <div className="flex flex-col items-center justify-center min-h-screen bg-[#F2F4F6] p-6 text-center">
               <WifiOff className="w-16 h-16 text-red-400 mb-4" />
               <h2 className="text-xl font-bold text-slate-800 mb-2">서버 연결 실패</h2>
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-red-100 max-w-md">
-                  <p className="text-red-500 font-medium text-sm mb-2">{authError}</p>
-                  <p className="text-xs text-gray-500">
-                    * 미리보기 환경에서는 Gemini가 제공하는 설정을 사용해야 합니다.<br/>
-                    * 로컬 환경이라면 Firebase Console에서 도메인을 승인해주세요.
-                  </p>
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-red-100 max-w-lg text-left">
+                  <div className="flex items-start gap-3 mb-4">
+                      <AlertCircle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
+                      <div>
+                          <p className="text-red-600 font-bold text-sm mb-1">오류 원인: {authError}</p>
+                      </div>
+                  </div>
+                  
+                  <div className="bg-slate-50 p-4 rounded-lg text-xs text-slate-600 space-y-2 mb-4">
+                    <p className="font-bold mb-1">[해결 방법 가이드]</p>
+                    <p>1. <b>Firebase Console</b> 접속 &gt; 해당 프로젝트 선택</p>
+                    <p>2. 좌측 메뉴 <b>Authentication</b> &gt; <b>Sign-in method</b> 탭 클릭</p>
+                    <p>3. <b>익명(Anonymous)</b> 항목을 찾아 '사용 설정(Enabled)'으로 변경 후 저장</p>
+                    <p className="pt-2 text-gray-400">※ 그래도 안 된다면? Google Cloud Console에서 API 키 제한(Identity Toolkit API 포함 여부)을 확인하세요.</p>
+                  </div>
+
+                  <button 
+                    onClick={() => setRetryCount(c => c + 1)}
+                    className="w-full flex items-center justify-center gap-2 bg-slate-800 text-white py-3 rounded-lg font-bold hover:bg-slate-700 transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4" /> 설정 완료 후 재시도
+                  </button>
               </div>
           </div>
       );

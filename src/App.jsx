@@ -26,9 +26,9 @@ import {
   getDocs
 } from "firebase/firestore";
 
-// ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
-// [필수] Firebase 콘솔 -> 프로젝트 설정 -> 일반 -> '내 앱'에서 복사한 sdk 설정을 아래에 덮어쓰세요.
-// ----------------------------------------------------------------------
+// ---------------------------------------------------------
+// [설정] Firebase 콘솔 값 복구 (실제 연동을 위해 필수)
+// ---------------------------------------------------------
 const firebaseConfig = {
   apiKey: "AIzaSyApqIy9DDNZEIb5MIUdWGWSXpRfZtxc1u4",
   authDomain: "car-352f0.firebaseapp.com",
@@ -38,30 +38,22 @@ const firebaseConfig = {
   appId: "1:779327619494:web:7af797c295abcf14dc0f67",
   measurementId: "G-CVPPMN6E1P"
 };
-// ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
 
-// Firebase 앱 초기화 (설정값이 있을 때만 실행)
-const app = Object.keys(firebaseConfig).length > 0 ? initializeApp(firebaseConfig) : null;
-const auth = app ? getAuth(app) : null;
-const db = app ? getFirestore(app) : null;
+// Firebase 앱 초기화
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 // --- Helper: 컬렉션 참조 함수 ---
-// 보안 규칙이 모든 경로를 허용하므로, 루트 컬렉션을 직접 사용합니다.
-const getCollection = (colName) => {
-  if (!db) return null;
-  return collection(db, colName);
-};
-const getDocRef = (colName, docId) => {
-  if (!db) return null;
-  return doc(db, colName, docId);
-};
+// 규칙이 'allow ... if true'이므로 최상위 컬렉션을 사용하여 경로 오류 방지
+const getCollection = (colName) => collection(db, colName);
+const getDocRef = (colName, docId) => doc(db, colName, docId);
 
 // --- Components ---
 
 // 1. Canvas 기반 스타렉스 컴포넌트
 const StarexVan = ({ isDoorOpen }) => {
   const canvasRef = useRef(null);
-  const containerRef = useRef(null);
   const { scrollY } = useScroll();
   const scrollRef = useRef(0);
   const doorPosRef = useRef(0); 
@@ -201,7 +193,7 @@ const StarexVan = ({ isDoorOpen }) => {
   }, [isDoorOpen]); 
 
   return (
-    <div ref={containerRef} className="sticky top-0 z-0 flex justify-center w-full h-48 overflow-hidden bg-blue-50/50 backdrop-blur-sm">
+    <div className="sticky top-0 z-0 flex justify-center w-full h-48 overflow-hidden bg-blue-50/50 backdrop-blur-sm">
       <motion.div
         initial={{ x: -1000, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
@@ -280,19 +272,15 @@ const HistoryModal = ({ onClose, user }) => {
   const [adminPwd, setAdminPwd] = useState('');
   const [showPwdInput, setShowPwdInput] = useState(null);
   const [editForm, setEditForm] = useState({ driverRank: '', driverName: '', ncoRank: '', ncoName: '' });
-  
   const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
 
   useEffect(() => {
-    if (!db) return;
-    const colRef = getCollection("history");
-    const q = query(colRef, orderBy("timestamp", "desc"));
+    if (!db || !user) return;
+    const q = query(getCollection("history"), orderBy("timestamp", "desc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setHistories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (error) => {
-        console.error("History load failed:", error);
-    });
+    }, (error) => console.error("History load error:", error));
     return () => unsubscribe();
   }, [user]);
 
@@ -302,74 +290,48 @@ const HistoryModal = ({ onClose, user }) => {
 
   const verifyPassword = (h) => {
       if (adminPwd === '수송') {
-         if (h === 'archive') {
-             manualArchive();
-         } else {
-             setShowPwdInput(null); setEditingId(h.id);
-             setEditForm({ driverRank: h.driver.rank, driverName: h.driver.name, ncoRank: h.nco.rank, ncoName: h.nco.name });
-         }
+         if (h === 'archive') { manualArchive(); } 
+         else { setShowPwdInput(null); setEditingId(h.id); setEditForm({ driverRank: h.driver.rank, driverName: h.driver.name, ncoRank: h.nco.rank, ncoName: h.nco.name }); }
       } else { alert('관리자 비밀번호 불일치'); setAdminPwd(''); }
   };
 
   const manualArchive = async () => {
     if (!confirm('오늘의 운행 기록을 저장하고 초기화하시겠습니까?')) return;
-    if (!db) { alert("Firebase 설정이 필요합니다."); return; }
-
     try {
         const today = new Date().toLocaleDateString();
-        const appCol = getCollection("applicants");
-        const pkgCol = getCollection("packages");
-
-        const appSnap = await getDocs(appCol);
-        const pkgSnap = await getDocs(pkgCol);
-        
+        const appSnap = await getDocs(getCollection("applicants"));
+        const pkgSnap = await getDocs(getCollection("packages"));
         const prevApplicants = appSnap.docs.map(d => d.data());
         
-        const crewDoc = await getDoc(getDocRef("settings", "crew"));
+        const crewSnap = await getDoc(getDocRef("settings", "crew"));
         let driver = {name:'', rank:'일병'}, nco = {name:'', rank:'하사'};
-        if (crewDoc.exists()) {
-            driver = crewDoc.data().driver || {name:'', rank:'일병'};
-            nco = crewDoc.data().nco || {name:'', rank:'하사'};
-        }
+        if (crewSnap.exists()) { driver = crewSnap.data().driver; nco = crewSnap.data().nco; }
 
         if (prevApplicants.length > 0) {
              await addDoc(getCollection("history"), {
-                date: today,
-                time: "수동마감",
-                count: prevApplicants.length,
+                date: today, time: "수동마감", count: prevApplicants.length,
                 applicantNames: prevApplicants.map(a => `${a.rank} ${a.name}`).join(', ') || "",
-                driver, nco,
-                timestamp: serverTimestamp()
+                driver, nco, timestamp: serverTimestamp()
              });
         }
-
         const batch = writeBatch(db);
         appSnap.docs.forEach(d => batch.delete(d.ref));
         pkgSnap.docs.forEach(d => batch.delete(d.ref));
-        
         batch.set(getDocRef("settings", "system"), { date: today });
         await batch.commit();
         alert('마감 완료');
-    } catch (e) {
-        console.error(e);
-        alert('마감 중 오류 발생: ' + e.message);
-    } finally {
-        setAdminPwd('');
-        setShowPwdInput(null);
-    }
+    } catch (e) { alert('마감 중 오류 발생: ' + e.message); } 
+    finally { setAdminPwd(''); setShowPwdInput(null); }
   };
 
   const handleSaveEdit = async (h) => {
-      if (!db) return;
       try {
         await updateDoc(getDocRef("history", h.id), {
             driver: { name: editForm.driverName, rank: editForm.driverRank },
             nco: { name: editForm.ncoName, rank: editForm.ncoRank }
         });
         setEditingId(null);
-      } catch (e) {
-          alert("수정 실패: " + e.message);
-      }
+      } catch(e) { alert("수정 실패"); }
   };
 
   return (
@@ -380,37 +342,21 @@ const HistoryModal = ({ onClose, user }) => {
             <h3 className="text-white font-bold text-lg flex items-center gap-2"><History className="w-5 h-5" /> 운행 기록</h3>
             <button onClick={onClose}><X className="w-6 h-6 text-white" /></button>
         </div>
-        
         <div className="bg-gray-100 p-2 flex justify-end border-b">
              {showPwdInput === 'archive' ? (
-                 <div className="flex gap-2 w-full">
-                    <input type="password" className="flex-1 text-xs p-1.5 border rounded" value={adminPwd} onChange={(e) => setAdminPwd(e.target.value)} placeholder="관리자 비번" />
-                    <button onClick={() => verifyPassword('archive')} className="bg-red-500 text-white text-xs px-2 rounded font-bold">확인</button>
-                    <button onClick={() => setShowPwdInput(null)} className="text-gray-500 text-xs px-2">취소</button>
-                 </div>
+                 <div className="flex gap-2 w-full"><input type="password" className="flex-1 text-xs p-1.5 border rounded" value={adminPwd} onChange={(e) => setAdminPwd(e.target.value)} placeholder="관리자 비번" /><button onClick={() => verifyPassword('archive')} className="bg-red-500 text-white text-xs px-2 rounded font-bold">확인</button><button onClick={() => setShowPwdInput(null)} className="text-gray-500 text-xs px-2">취소</button></div>
              ) : (
-                 <button onClick={() => { setShowPwdInput('archive'); setAdminPwd(''); }} className="text-xs text-red-500 font-bold flex items-center gap-1 border border-red-200 bg-white px-2 py-1 rounded-lg">
-                    <AlertCircle className="w-3 h-3"/> 오늘 운행 마감
-                 </button>
+                 <button onClick={() => { setShowPwdInput('archive'); setAdminPwd(''); }} className="text-xs text-red-500 font-bold flex items-center gap-1 border border-red-200 bg-white px-2 py-1 rounded-lg"><AlertCircle className="w-3 h-3"/> 오늘 운행 마감</button>
              )}
         </div>
-
         <div className="p-4 max-h-[55vh] overflow-y-auto space-y-3 bg-gray-50 min-h-[200px]">
             {histories.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm">기록 없음</div> : 
                 histories.map(h => (
                     <div key={h.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 relative">
                         <button onClick={() => handleEditClick(h)} className="absolute top-4 right-4 text-gray-400 hover:text-blue-500"><Edit2 className="w-4 h-4" /></button>
-                        <div className="flex justify-between items-start mb-2 pr-8">
-                            <span className="font-bold text-slate-700 flex items-center gap-1 text-sm"><Calendar className="w-3.5 h-3.5 text-blue-500" /> {h.date}</span>
-                        </div>
+                        <div className="flex justify-between items-start mb-2 pr-8"><span className="font-bold text-slate-700 flex items-center gap-1 text-sm"><Calendar className="w-3.5 h-3.5 text-blue-500" /> {h.date}</span></div>
                         <div className="text-xs text-gray-400 mb-2">{h.time}</div>
-                        
-                        {showPwdInput === h.id && (
-                             <div className="bg-gray-100 p-2 rounded-lg mb-3 flex gap-2">
-                                <input type="password" className="flex-1 text-xs p-1 border" value={adminPwd} onChange={(e) => setAdminPwd(e.target.value)} placeholder="비번" />
-                                <button onClick={() => verifyPassword(h)} className="bg-slate-800 text-white text-xs px-2 rounded">확인</button>
-                             </div>
-                        )}
+                        {showPwdInput === h.id && (<div className="bg-gray-100 p-2 rounded-lg mb-3 flex gap-2"><input type="password" className="flex-1 text-xs p-1 border" value={adminPwd} onChange={(e) => setAdminPwd(e.target.value)} placeholder="비번" /><button onClick={() => verifyPassword(h)} className="bg-slate-800 text-white text-xs px-2 rounded">확인</button></div>)}
                         {editingId === h.id ? (
                             <div className="bg-blue-50 p-3 rounded-lg space-y-2">
                                 <div className="flex gap-1"><select value={editForm.driverRank} onChange={(e) => setEditForm({...editForm, driverRank: e.target.value})} className="text-xs p-1 border">{ranks.map(r=><option key={r} value={r}>{r}</option>)}</select><input value={editForm.driverName} onChange={(e) => setEditForm({...editForm, driverName: e.target.value})} className="flex-1 text-xs p-1 border" placeholder="운전자" /></div>
@@ -418,10 +364,7 @@ const HistoryModal = ({ onClose, user }) => {
                                 <button onClick={() => handleSaveEdit(h)} className="w-full bg-blue-500 text-white text-xs py-1.5 rounded font-bold">저장</button>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-2 gap-2 mt-3 mb-3">
-                                <div className="bg-slate-50 p-2 rounded-lg"><div className="text-[10px] text-gray-400 mb-0.5"><Car className="w-3 h-3 inline"/> 운전자</div><div className="text-xs font-bold">{h.driver?.rank} {h.driver?.name}</div></div>
-                                <div className="bg-slate-50 p-2 rounded-lg"><div className="text-[10px] text-gray-400 mb-0.5"><Award className="w-3 h-3 inline"/> 부직사관</div><div className="text-xs font-bold">{h.nco?.rank} {h.nco?.name}</div></div>
-                            </div>
+                            <div className="grid grid-cols-2 gap-2 mt-3 mb-3"><div className="bg-slate-50 p-2 rounded-lg"><div className="text-[10px] text-gray-400 mb-0.5"><Car className="w-3 h-3 inline"/> 운전자</div><div className="text-xs font-bold">{h.driver?.rank} {h.driver?.name}</div></div><div className="bg-slate-50 p-2 rounded-lg"><div className="text-[10px] text-gray-400 mb-0.5"><Award className="w-3 h-3 inline"/> 부직사관</div><div className="text-xs font-bold">{h.nco?.rank} {h.nco?.name}</div></div></div>
                         )}
                         <div className="text-xs text-gray-500 border-t pt-2"><span className="font-semibold">탑승자({h.count}명):</span> {h.applicantNames}</div>
                     </div>
@@ -439,20 +382,15 @@ const CrewModal = ({ onClose, user }) => {
     const [nco, setNco] = useState({ name: '', rank: '하사' });
     const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
     useEffect(() => {
-        if (!db) return;
-        const docRef = getDocRef("settings", "crew");
-
-        const unsub = onSnapshot(docRef, (doc) => {
+        if (!db || !user) return;
+        const unsub = onSnapshot(getDocRef("settings", "crew"), (doc) => {
             if (doc.exists()) { setDriver(doc.data().driver); setNco(doc.data().nco); }
         });
         return () => unsub();
     }, [user]);
     const handleSave = async () => {
-        if (!db) { alert("설정이 필요합니다."); return; }
-        try {
-            await setDoc(getDocRef("settings", "crew"), { driver, nco });
-            onClose();
-        } catch(e) { alert("저장 실패: " + e.message); }
+        try { await setDoc(getDocRef("settings", "crew"), { driver, nco }); onClose(); } 
+        catch(e) { alert("저장 실패"); }
     };
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
@@ -469,32 +407,29 @@ const CrewModal = ({ onClose, user }) => {
     );
 }
 
-// 6. 택배 수령 신청 모달
+// 6. 택배 수령 신청 모달 (안닫힘 및 데이터 오류 수정됨)
 const PackageModal = ({ onClose, onSuccess, user }) => {
     const [form, setForm] = useState({ name: '', rank: '이병', count: 1, pin: '' });
     const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '군무원'];
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!db) { alert("Firebase 설정이 올바르지 않습니다. 코드를 확인해주세요."); return; }
+        if (!db || !user) { alert("연결 대기중..."); return; }
         if(!form.name || form.pin.length !== 4) { alert('이름과 4자리 비밀번호를 입력해주세요.'); return; }
 
         try {
-            // [중요 수정] 데이터 구조를 명확히 하여 '0개' 및 '이름 없음' 오류 방지
+            // [수정] 데이터가 0으로 들어가는 오류 방지 (Number 변환)
             await addDoc(getCollection("packages"), {
                 name: form.name,
                 rank: form.rank,
-                count: Number(form.count), // 숫자로 변환
+                count: Number(form.count),
                 pin: form.pin,
                 time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
                 timestamp: serverTimestamp()
             });
-            // 성공 시에만 닫기 실행
-            onSuccess();
+            onSuccess(); // 성공 시에만 모달 닫음
         } catch (error) {
-            console.error("Package submit error:", error);
             alert("신청 중 오류가 발생했습니다: " + error.message);
-            // 여기서 에러가 나면 onSuccess()가 실행되지 않아 모달이 닫히지 않음 (의도된 동작)
         }
     };
 
@@ -504,24 +439,9 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative z-10">
                 <div className="flex justify-between items-center mb-4"><h3 className="text-xl font-bold flex items-center gap-2"><Box className="text-orange-500"/> 택배 수령 신청</h3><button onClick={onClose}><X/></button></div>
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="text-xs text-gray-400">계급 & 이름</label>
-                        <div className="flex gap-2">
-                            <select value={form.rank} onChange={e=>setForm({...form, rank: e.target.value})} className="bg-gray-50 p-3 rounded-xl">{ranks.map(r=><option key={r} value={r}>{r}</option>)}</select>
-                            <input value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="bg-gray-50 p-3 rounded-xl flex-1" placeholder="이름"/>
-                        </div>
-                    </div>
-                    <div>
-                        <label className="text-xs text-gray-400">수량 (박스)</label>
-                        <div className="flex items-center gap-4 bg-gray-50 p-3 rounded-xl">
-                            <input type="range" min="1" max="10" value={form.count} onChange={e=>setForm({...form, count: parseInt(e.target.value)})} className="flex-1 accent-orange-500" />
-                            <span className="font-bold text-lg w-8 text-center">{form.count}</span>
-                        </div>
-                    </div>
-                    <div>
-                        <label className="text-xs text-gray-400">비밀번호 (4자리)</label>
-                        <input type="password" maxLength={4} value={form.pin} onChange={e=>setForm({...form, pin: e.target.value.replace(/[^0-9]/g, '')})} className="w-full bg-gray-50 p-3 rounded-xl tracking-widest" placeholder="0000"/>
-                    </div>
+                    <div><label className="text-xs text-gray-400">계급 & 이름</label><div className="flex gap-2"><select value={form.rank} onChange={e=>setForm({...form, rank: e.target.value})} className="bg-gray-50 p-3 rounded-xl">{ranks.map(r=><option key={r} value={r}>{r}</option>)}</select><input value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="bg-gray-50 p-3 rounded-xl flex-1" placeholder="이름"/></div></div>
+                    <div><label className="text-xs text-gray-400">수량 (박스)</label><div className="flex items-center gap-4 bg-gray-50 p-3 rounded-xl"><input type="range" min="1" max="10" value={form.count} onChange={e=>setForm({...form, count: parseInt(e.target.value)})} className="flex-1 accent-orange-500" /><span className="font-bold text-lg w-8 text-center">{form.count}</span></div></div>
+                    <div><label className="text-xs text-gray-400">비밀번호 (4자리)</label><input type="password" maxLength={4} value={form.pin} onChange={e=>setForm({...form, pin: e.target.value.replace(/[^0-9]/g, '')})} className="w-full bg-gray-50 p-3 rounded-xl tracking-widest" placeholder="0000"/></div>
                     <button type="submit" className="w-full bg-orange-500 text-white font-bold py-4 rounded-xl">신청하기</button>
                 </form>
             </motion.div>
@@ -551,49 +471,61 @@ export default function WelfareCarApp() {
 
   const ranks = ['이병', '일병', '상병', '병장'];
 
-  // 0. Firebase 인증
+  // 0. Firebase 인증 (앱 시작 시 필수)
   useEffect(() => {
     if (!auth) return;
-
     const initAuth = async () => {
-        try {
-            await signInAnonymously(auth);
-        } catch (error) {
-            console.error("Auth failed", error);
-        }
+        try { await signInAnonymously(auth); } 
+        catch (error) { console.error("Auth failed", error); }
     };
     initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+    return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // 1. 데이터 리스너
+  // 1. 데이터 리스너 (User 확인 후 실행)
   useEffect(() => {
     if (!user || !db) return;
 
-    const appCol = getCollection("applicants");
-    const pkgCol = getCollection("packages");
-    
-    // Snapshot 리스너
-    const unsub1 = onSnapshot(query(appCol, orderBy("timestamp", "asc")), 
+    const unsub1 = onSnapshot(query(getCollection("applicants"), orderBy("timestamp", "asc")), 
         (snap) => setApplicants(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-        (err) => console.error("Applicants sync error:", err)
+        (err) => console.error("Applicants error:", err)
     );
     
-    const unsub2 = onSnapshot(query(pkgCol, orderBy("timestamp", "asc")), 
+    const unsub2 = onSnapshot(query(getCollection("packages"), orderBy("timestamp", "asc")), 
         (snap) => setPackages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-        (err) => console.error("Packages sync error:", err)
+        (err) => console.error("Packages error:", err)
     );
 
     return () => { unsub1(); unsub2(); };
   }, [user]);
 
+  // 2. 자동 아카이빙
+  useEffect(() => {
+      const checkArchive = async () => {
+        if (!user || !db) return;
+        try {
+            const today = new Date().toLocaleDateString();
+            const sysRef = getDocRef("settings", "system");
+            const sysSnap = await getDoc(sysRef);
+            const savedDate = sysSnap.exists() ? sysSnap.data().date : "";
+
+            if (savedDate && savedDate !== today) {
+                // 날짜 변경 감지 -> 자동 초기화 로직
+                // (자동 삭제 기능은 데이터 손실 방지를 위해 주석 처리하거나 신중히 사용 권장)
+                // 현재는 날짜만 업데이트
+                await setDoc(sysRef, { date: today });
+            } else if (!savedDate) { 
+                await setDoc(sysRef, { date: today }); 
+            }
+        } catch (e) { console.warn("Auto-archive skipped:", e); }
+      };
+      if (user) checkArchive();
+  }, [user]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!db || !user) { alert("Firebase 연결이 안되었습니다. 설정을 확인하세요."); return; }
+    if (!db || !user) { alert("잠시만 기다려주세요 (연결 중)"); return; }
     if (!name || pin.length !== 4) { alert('이름과 비밀번호 4자리를 입력해주세요.'); return; }
-    
     try {
         await addDoc(getCollection("applicants"), {
             name, rank, pin,
@@ -602,33 +534,22 @@ export default function WelfareCarApp() {
         });
         setName(''); setPin('');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    } catch (e) {
-        alert("신청 실패: " + e.message);
-    }
+    } catch(e) { alert("신청 실패: " + e.message); }
   };
 
   const confirmCancel = async (id, targetPin, type) => {
-    if (!db) return;
+    if (!db || !user) return;
     if (cancelPin === targetPin) {
       try {
           const colName = type === 'package' ? "packages" : "applicants";
           await deleteDoc(getDocRef(colName, id));
           setCancelId(null); setCancelPin('');
-      } catch (e) {
-          alert("취소 실패: " + e.message);
-      }
+      } catch(e) { alert("취소 실패"); }
     } else { alert('비번 불일치'); setCancelPin(''); }
   };
 
-  const openPackageModal = () => {
-      setIsDoorOpen(true);
-      setTimeout(() => setShowPackageModal(true), 800);
-  };
-
-  const closePackageModal = () => {
-      setShowPackageModal(false);
-      setIsDoorOpen(false);
-  };
+  const openPackageModal = () => { setIsDoorOpen(true); setTimeout(() => setShowPackageModal(true), 800); };
+  const closePackageModal = () => { setShowPackageModal(false); setIsDoorOpen(false); };
 
   return (
     <div className="min-h-screen bg-[#F2F4F6] text-[#191F28] font-sans pb-32 relative">
@@ -641,7 +562,6 @@ export default function WelfareCarApp() {
         <StatusBadge />
       </header>
 
-      {/* 애니메이션 섹션 */}
       <div className="pt-16 relative">
           <StarexVan isDoorOpen={isDoorOpen} />
           <div className="absolute bottom-4 left-0 w-full flex justify-center z-10">
@@ -695,9 +615,8 @@ export default function WelfareCarApp() {
                             <div className="flex justify-between items-center">
                                 <div className="flex gap-2 items-center">
                                     <div className="bg-orange-100 p-1 rounded"><Package className="w-3 h-3 text-orange-500"/></div>
-                                    {/* 안전한 렌더링: 이름이나 수량이 없을 때를 대비한 방어 코드 */}
-                                    <div className="text-sm font-bold">{pkg.name || '이름없음'} <span className="text-xs font-normal text-gray-400">({pkg.rank || '-'})</span></div>
-                                    <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count || 0}개</span>
+                                    <div className="text-sm font-bold">{pkg.name} <span className="text-xs font-normal text-gray-400">({pkg.rank})</span></div>
+                                    <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count}개</span>
                                 </div>
                                 <button onClick={() => { setCancelId(cancelId === pkg.id ? null : pkg.id); setCancelType('package'); }} className="text-xs text-gray-400 underline">취소</button>
                             </div>

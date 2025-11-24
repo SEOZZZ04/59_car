@@ -2,14 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
 import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle } from 'lucide-react';
 
-/* =========================================================================
-[안내] 현재 Firebase 연결이 해제되었습니다. (오류 방지용)
-나중에 Github 등에서 가져온 올바른 Firebase 설정 코드를 
-아래 [FIREBASE_CONFIG_AREA] 영역에 덮어씌우면 됩니다.
-=========================================================================
-*/
-
-// --- Firebase Imports (나중에 사용하기 위해 남겨둠) ---
+// --- Firebase Imports ---
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -34,10 +27,8 @@ import {
 } from "firebase/firestore";
 
 // ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
-// [FIREBASE_CONFIG_AREA] : 이곳에 작동하는 Firebase 설정 코드를 붙여넣으세요.
-// 지금은 오류를 막기 위해 db와 auth를 null로 설정해 두었습니다.
+// [필수] Firebase 콘솔 -> 프로젝트 설정 -> 일반 -> '내 앱'에서 복사한 sdk 설정을 아래에 덮어쓰세요.
 // ----------------------------------------------------------------------
-
 const firebaseConfig = {
   apiKey: "AIzaSyApqIy9DDNZEIb5MIUdWGWSXpRfZtxc1u4",
   authDomain: "car-352f0.firebaseapp.com",
@@ -49,7 +40,13 @@ const firebaseConfig = {
 };
 // ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
 
-// --- Helper: 컬렉션 참조 함수 (DB가 연결되면 작동) ---
+// Firebase 앱 초기화 (설정값이 있을 때만 실행)
+const app = Object.keys(firebaseConfig).length > 0 ? initializeApp(firebaseConfig) : null;
+const auth = app ? getAuth(app) : null;
+const db = app ? getFirestore(app) : null;
+
+// --- Helper: 컬렉션 참조 함수 ---
+// 보안 규칙이 모든 경로를 허용하므로, 루트 컬렉션을 직접 사용합니다.
 const getCollection = (colName) => {
   if (!db) return null;
   return collection(db, colName);
@@ -287,16 +284,14 @@ const HistoryModal = ({ onClose, user }) => {
   const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
 
   useEffect(() => {
-    if (!db) {
-        // [수정] 가짜 데이터 제거 -> 빈 배열로 초기화
-        setHistories([]);
-        return;
-    }
+    if (!db) return;
     const colRef = getCollection("history");
     const q = query(colRef, orderBy("timestamp", "desc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setHistories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+        console.error("History load failed:", error);
     });
     return () => unsubscribe();
   }, [user]);
@@ -318,18 +313,63 @@ const HistoryModal = ({ onClose, user }) => {
 
   const manualArchive = async () => {
     if (!confirm('오늘의 운행 기록을 저장하고 초기화하시겠습니까?')) return;
-    if (!db) { alert('[데모] 마감 기능이 시뮬레이션 되었습니다.'); return; }
-    
-    // (이하 실제 로직은 db가 있을 때만 실행됨)
+    if (!db) { alert("Firebase 설정이 필요합니다."); return; }
+
+    try {
+        const today = new Date().toLocaleDateString();
+        const appCol = getCollection("applicants");
+        const pkgCol = getCollection("packages");
+
+        const appSnap = await getDocs(appCol);
+        const pkgSnap = await getDocs(pkgCol);
+        
+        const prevApplicants = appSnap.docs.map(d => d.data());
+        
+        const crewDoc = await getDoc(getDocRef("settings", "crew"));
+        let driver = {name:'', rank:'일병'}, nco = {name:'', rank:'하사'};
+        if (crewDoc.exists()) {
+            driver = crewDoc.data().driver || {name:'', rank:'일병'};
+            nco = crewDoc.data().nco || {name:'', rank:'하사'};
+        }
+
+        if (prevApplicants.length > 0) {
+             await addDoc(getCollection("history"), {
+                date: today,
+                time: "수동마감",
+                count: prevApplicants.length,
+                applicantNames: prevApplicants.map(a => `${a.rank} ${a.name}`).join(', ') || "",
+                driver, nco,
+                timestamp: serverTimestamp()
+             });
+        }
+
+        const batch = writeBatch(db);
+        appSnap.docs.forEach(d => batch.delete(d.ref));
+        pkgSnap.docs.forEach(d => batch.delete(d.ref));
+        
+        batch.set(getDocRef("settings", "system"), { date: today });
+        await batch.commit();
+        alert('마감 완료');
+    } catch (e) {
+        console.error(e);
+        alert('마감 중 오류 발생: ' + e.message);
+    } finally {
+        setAdminPwd('');
+        setShowPwdInput(null);
+    }
   };
 
   const handleSaveEdit = async (h) => {
       if (!db) return;
-      await updateDoc(getDocRef("history", h.id), {
-          driver: { name: editForm.driverName, rank: editForm.driverRank },
-          nco: { name: editForm.ncoName, rank: editForm.ncoRank }
-      });
-      setEditingId(null);
+      try {
+        await updateDoc(getDocRef("history", h.id), {
+            driver: { name: editForm.driverName, rank: editForm.driverRank },
+            nco: { name: editForm.ncoName, rank: editForm.ncoRank }
+        });
+        setEditingId(null);
+      } catch (e) {
+          alert("수정 실패: " + e.message);
+      }
   };
 
   return (
@@ -399,12 +439,7 @@ const CrewModal = ({ onClose, user }) => {
     const [nco, setNco] = useState({ name: '', rank: '하사' });
     const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
     useEffect(() => {
-        if (!db) {
-            // [수정] 가짜 데이터 제거 -> 초기값 빈칸
-            setDriver({ name: '', rank: '일병'});
-            setNco({ name: '', rank: '하사'});
-            return;
-        }
+        if (!db) return;
         const docRef = getDocRef("settings", "crew");
 
         const unsub = onSnapshot(docRef, (doc) => {
@@ -413,9 +448,11 @@ const CrewModal = ({ onClose, user }) => {
         return () => unsub();
     }, [user]);
     const handleSave = async () => {
-        if (!db) { onClose(); return; }
-        await setDoc(getDocRef("settings", "crew"), { driver, nco });
-        onClose();
+        if (!db) { alert("설정이 필요합니다."); return; }
+        try {
+            await setDoc(getDocRef("settings", "crew"), { driver, nco });
+            onClose();
+        } catch(e) { alert("저장 실패: " + e.message); }
     };
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
@@ -439,20 +476,26 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        // DB 없음 (로컬 테스트)
-        if (!db) {
-            onSuccess({ ...form, id: Date.now().toString() }); // 가짜 성공 처리
-            return;
-        }
-
+        if (!db) { alert("Firebase 설정이 올바르지 않습니다. 코드를 확인해주세요."); return; }
         if(!form.name || form.pin.length !== 4) { alert('이름과 4자리 비밀번호를 입력해주세요.'); return; }
 
-        await addDoc(getCollection("packages"), {
-            ...form,
-            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-            timestamp: serverTimestamp()
-        });
-        onSuccess();
+        try {
+            // [중요 수정] 데이터 구조를 명확히 하여 '0개' 및 '이름 없음' 오류 방지
+            await addDoc(getCollection("packages"), {
+                name: form.name,
+                rank: form.rank,
+                count: Number(form.count), // 숫자로 변환
+                pin: form.pin,
+                time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+                timestamp: serverTimestamp()
+            });
+            // 성공 시에만 닫기 실행
+            onSuccess();
+        } catch (error) {
+            console.error("Package submit error:", error);
+            alert("신청 중 오류가 발생했습니다: " + error.message);
+            // 여기서 에러가 나면 onSuccess()가 실행되지 않아 모달이 닫히지 않음 (의도된 동작)
+        }
     };
 
     return (
@@ -489,7 +532,7 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 // --- Main App ---
 
 export default function WelfareCarApp() {
-  const [user, setUser] = useState({ uid: 'mock-user' }); // Auth 무시 (가짜 유저)
+  const [user, setUser] = useState(null); 
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
   const [pin, setPin] = useState('');
@@ -508,52 +551,72 @@ export default function WelfareCarApp() {
 
   const ranks = ['이병', '일병', '상병', '병장'];
 
+  // 0. Firebase 인증
+  useEffect(() => {
+    if (!auth) return;
+
+    const initAuth = async () => {
+        try {
+            await signInAnonymously(auth);
+        } catch (error) {
+            console.error("Auth failed", error);
+        }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
   // 1. 데이터 리스너
   useEffect(() => {
-    // [수정] 초기 가짜 데이터 제거 (빈 배열로 시작)
-    // if (!db) {
-    //     setApplicants([...]);
-    //     setPackages([...]);
-    // }
-  }, []);
+    if (!user || !db) return;
+
+    const appCol = getCollection("applicants");
+    const pkgCol = getCollection("packages");
+    
+    // Snapshot 리스너
+    const unsub1 = onSnapshot(query(appCol, orderBy("timestamp", "asc")), 
+        (snap) => setApplicants(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
+        (err) => console.error("Applicants sync error:", err)
+    );
+    
+    const unsub2 = onSnapshot(query(pkgCol, orderBy("timestamp", "asc")), 
+        (snap) => setPackages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
+        (err) => console.error("Packages sync error:", err)
+    );
+
+    return () => { unsub1(); unsub2(); };
+  }, [user]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!db || !user) { alert("Firebase 연결이 안되었습니다. 설정을 확인하세요."); return; }
     if (!name || pin.length !== 4) { alert('이름과 비밀번호 4자리를 입력해주세요.'); return; }
-
-    // Mock
-    if (!db) {
-        setApplicants([...applicants, {
-            id: Date.now().toString(),
+    
+    try {
+        await addDoc(getCollection("applicants"), {
             name, rank, pin,
-            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-        }]);
+            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+            timestamp: serverTimestamp()
+        });
         setName(''); setPin('');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-        return;
+    } catch (e) {
+        alert("신청 실패: " + e.message);
     }
-    
-    // Real DB Logic (DB=null 이므로 실행 안됨)
-    await addDoc(getCollection("applicants"), {
-        name, rank, pin,
-        time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-        timestamp: serverTimestamp()
-    });
   };
 
   const confirmCancel = async (id, targetPin, type) => {
+    if (!db) return;
     if (cancelPin === targetPin) {
-      if (!db) {
-        // Mock Delete
-        if (type === 'ride') setApplicants(applicants.filter(a => a.id !== id));
-        else setPackages(packages.filter(p => p.id !== id));
-        setCancelId(null); setCancelPin('');
-        return;
+      try {
+          const colName = type === 'package' ? "packages" : "applicants";
+          await deleteDoc(getDocRef(colName, id));
+          setCancelId(null); setCancelPin('');
+      } catch (e) {
+          alert("취소 실패: " + e.message);
       }
-
-      const colName = type === 'package' ? "packages" : "applicants";
-      await deleteDoc(getDocRef(colName, id));
-      setCancelId(null); setCancelPin('');
     } else { alert('비번 불일치'); setCancelPin(''); }
   };
 
@@ -562,11 +625,7 @@ export default function WelfareCarApp() {
       setTimeout(() => setShowPackageModal(true), 800);
   };
 
-  const closePackageModal = (newItem) => {
-      if (newItem) {
-          // Mock Add
-           setPackages([...packages, { ...newItem, id: Date.now().toString() }]);
-      }
+  const closePackageModal = () => {
       setShowPackageModal(false);
       setIsDoorOpen(false);
   };
@@ -636,8 +695,9 @@ export default function WelfareCarApp() {
                             <div className="flex justify-between items-center">
                                 <div className="flex gap-2 items-center">
                                     <div className="bg-orange-100 p-1 rounded"><Package className="w-3 h-3 text-orange-500"/></div>
-                                    <div className="text-sm font-bold">{pkg.name} <span className="text-xs font-normal text-gray-400">({pkg.rank})</span></div>
-                                    <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count}개</span>
+                                    {/* 안전한 렌더링: 이름이나 수량이 없을 때를 대비한 방어 코드 */}
+                                    <div className="text-sm font-bold">{pkg.name || '이름없음'} <span className="text-xs font-normal text-gray-400">({pkg.rank || '-'})</span></div>
+                                    <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count || 0}개</span>
                                 </div>
                                 <button onClick={() => { setCancelId(cancelId === pkg.id ? null : pkg.id); setCancelType('package'); }} className="text-xs text-gray-400 underline">취소</button>
                             </div>

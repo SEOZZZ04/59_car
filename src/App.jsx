@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle } from 'lucide-react';
+import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2 } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
   signInAnonymously, 
-  onAuthStateChanged 
+  onAuthStateChanged,
+  signInWithCustomToken
 } from "firebase/auth";
 import { 
   getFirestore, 
@@ -27,27 +28,42 @@ import {
 } from "firebase/firestore";
 
 // ---------------------------------------------------------
-// [설정] Firebase 콘솔 값 복구 (실제 연동을 위해 필수)
+// [설정] Firebase 초기화 (Gemini 환경 호환성 패치 적용)
 // ---------------------------------------------------------
-const firebaseConfig = {
-  apiKey: "AIzaSyApqIy9DDNZEIb5MIUdWGWSXpRfZtxc1u4",
-  authDomain: "car-352f0.firebaseapp.com",
-  projectId: "car-352f0",
-  storageBucket: "car-352f0.firebasestorage.app",
-  messagingSenderId: "779327619494",
-  appId: "1:779327619494:web:7af797c295abcf14dc0f67",
-  measurementId: "G-CVPPMN6E1P"
+// 사용자의 원래 설정은 배포 시 사용하세요. 
+// 현재 미리보기 환경에서는 아래 설정이 필수입니다.
+const getFirebaseConfig = () => {
+  if (typeof __firebase_config !== 'undefined') {
+    return JSON.parse(__firebase_config);
+  }
+  // Fallback (사용자가 제공한 설정, 로컬 환경용)
+  return {
+    apiKey: "AIzaSyApqIy9DDNZEIb5MIUdWGWSXpRfZtxc1u4",
+    authDomain: "car-352f0.firebaseapp.com",
+    projectId: "car-352f0",
+    storageBucket: "car-352f0.firebasestorage.app",
+    messagingSenderId: "779327619494",
+    appId: "1:779327619494:web:7af797c295abcf14dc0f67",
+    measurementId: "G-CVPPMN6E1P"
+  };
 };
 
-// Firebase 앱 초기화
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(getFirebaseConfig());
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// --- Helper: 컬렉션 참조 함수 ---
-// 규칙이 'allow ... if true'이므로 최상위 컬렉션을 사용하여 경로 오류 방지
-const getCollection = (colName) => collection(db, colName);
-const getDocRef = (colName, docId) => doc(db, colName, docId);
+// Gemini 환경 변수: 앱별 격리된 경로 사용
+const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- Helper: 컬렉션 참조 함수 (경로 수정됨) ---
+// 미리보기 환경에서는 반드시 'artifacts' 하위 경로를 사용해야 권한 오류가 발생하지 않습니다.
+const getCollection = (colName) => {
+  return collection(db, 'artifacts', APP_ID, 'public', 'data', colName);
+};
+
+const getDocRef = (colName, docId) => {
+  return doc(db, 'artifacts', APP_ID, 'public', 'data', colName, docId);
+};
 
 // --- Components ---
 
@@ -241,7 +257,7 @@ const StatusBadge = () => {
       const runningDays = [0, 2, 4, 6]; 
 
       if (!runningDays.includes(day)) {
-        setStatus({ text: '미운행 (화/목/토/일 운행)', color: 'bg-gray-400' });
+        setStatus({ text: '미운행 (화/목/토/일)', color: 'bg-gray-400' });
         return;
       }
       const time1815 = 18 * 60 + 15;
@@ -255,14 +271,14 @@ const StatusBadge = () => {
       } else if (currentTime >= time1815) {
         setStatus({ text: '출발 15분전', color: 'bg-blue-500' });
       } else {
-        setStatus({ text: '운행 대기 (18:15 출발)', color: 'bg-blue-400' });
+        setStatus({ text: '운행 대기 (18:15)', color: 'bg-blue-400' });
       }
     };
     checkStatus();
     const interval = setInterval(checkStatus, 10000);
     return () => clearInterval(interval);
   }, []);
-  return <div className={`${status.color} text-white text-xs px-3 py-1.5 rounded-full font-bold transition-colors shadow-md`}>{status.text}</div>;
+  return <div className={`${status.color} text-white text-[10px] sm:text-xs px-3 py-1.5 rounded-full font-bold transition-colors shadow-md whitespace-nowrap`}>{status.text}</div>;
 };
 
 // 4. 기록 모달
@@ -291,7 +307,7 @@ const HistoryModal = ({ onClose, user }) => {
   const verifyPassword = (h) => {
       if (adminPwd === '수송') {
          if (h === 'archive') { manualArchive(); } 
-         else { setShowPwdInput(null); setEditingId(h.id); setEditForm({ driverRank: h.driver.rank, driverName: h.driver.name, ncoRank: h.nco.rank, ncoName: h.nco.name }); }
+         else { setShowPwdInput(null); setEditingId(h.id); setEditForm({ driverRank: h.driver?.rank || '이병', driverName: h.driver?.name || '', ncoRank: h.nco?.rank || '하사', ncoName: h.nco?.name || '' }); }
       } else { alert('관리자 비밀번호 불일치'); setAdminPwd(''); }
   };
 
@@ -407,7 +423,7 @@ const CrewModal = ({ onClose, user }) => {
     );
 }
 
-// 6. 택배 수령 신청 모달 (안닫힘 및 데이터 오류 수정됨)
+// 6. 택배 수령 신청 모달
 const PackageModal = ({ onClose, onSuccess, user }) => {
     const [form, setForm] = useState({ name: '', rank: '이병', count: 1, pin: '' });
     const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '군무원'];
@@ -418,7 +434,6 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
         if(!form.name || form.pin.length !== 4) { alert('이름과 4자리 비밀번호를 입력해주세요.'); return; }
 
         try {
-            // [수정] 데이터가 0으로 들어가는 오류 방지 (Number 변환)
             await addDoc(getCollection("packages"), {
                 name: form.name,
                 rank: form.rank,
@@ -427,7 +442,7 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
                 time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
                 timestamp: serverTimestamp()
             });
-            onSuccess(); // 성공 시에만 모달 닫음
+            onSuccess();
         } catch (error) {
             alert("신청 중 오류가 발생했습니다: " + error.message);
         }
@@ -451,8 +466,10 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 
 // --- Main App ---
 
-export default function WelfareCarApp() {
+export default function App() {
   const [user, setUser] = useState(null); 
+  const [authLoading, setAuthLoading] = useState(true); // 로딩 상태 추가
+
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
   const [pin, setPin] = useState('');
@@ -471,21 +488,36 @@ export default function WelfareCarApp() {
 
   const ranks = ['이병', '일병', '상병', '병장'];
 
-  // 0. Firebase 인증 (앱 시작 시 필수)
+  // 0. Firebase 인증 (앱 시작 시 필수) - 수정된 로직
   useEffect(() => {
-    if (!auth) return;
     const initAuth = async () => {
-        try { await signInAnonymously(auth); } 
-        catch (error) { console.error("Auth failed", error); }
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+        } catch (e) {
+            console.error("Custom token auth failed", e);
+            await signInAnonymously(auth);
+        }
+      } else {
+        await signInAnonymously(auth);
+      }
+      setAuthLoading(false); // 인증 완료 후 로딩 해제
     };
     initAuth();
-    return onAuthStateChanged(auth, setUser);
+    
+    // Auth 상태 변경 리스너
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+        setUser(u);
+        if (u) setAuthLoading(false); // 만약 리스너가 더 빨리 돌 경우 대비
+    });
+    return () => unsubscribe();
   }, []);
 
   // 1. 데이터 리스너 (User 확인 후 실행)
   useEffect(() => {
     if (!user || !db) return;
 
+    // 경로 수정된 getCollection 사용
     const unsub1 = onSnapshot(query(getCollection("applicants"), orderBy("timestamp", "asc")), 
         (snap) => setApplicants(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
         (err) => console.error("Applicants error:", err)
@@ -510,9 +542,6 @@ export default function WelfareCarApp() {
             const savedDate = sysSnap.exists() ? sysSnap.data().date : "";
 
             if (savedDate && savedDate !== today) {
-                // 날짜 변경 감지 -> 자동 초기화 로직
-                // (자동 삭제 기능은 데이터 손실 방지를 위해 주석 처리하거나 신중히 사용 권장)
-                // 현재는 날짜만 업데이트
                 await setDoc(sysRef, { date: today });
             } else if (!savedDate) { 
                 await setDoc(sysRef, { date: today }); 
@@ -550,6 +579,16 @@ export default function WelfareCarApp() {
 
   const openPackageModal = () => { setIsDoorOpen(true); setTimeout(() => setShowPackageModal(true), 800); };
   const closePackageModal = () => { setShowPackageModal(false); setIsDoorOpen(false); };
+
+  // 로딩 화면 (Auth 대기 중일 때 표시)
+  if (authLoading) {
+      return (
+          <div className="flex flex-col items-center justify-center min-h-screen bg-[#F2F4F6] gap-4">
+              <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+              <p className="text-slate-500 font-medium animate-pulse">시스템 연결 중...</p>
+          </div>
+      );
+  }
 
   return (
     <div className="min-h-screen bg-[#F2F4F6] text-[#191F28] font-sans pb-32 relative">

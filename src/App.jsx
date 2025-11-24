@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2 } from 'lucide-react';
+import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff } from 'lucide-react';
 
 // --- Firebase Imports ---
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   getAuth, 
   signInAnonymously, 
@@ -28,15 +28,17 @@ import {
 } from "firebase/firestore";
 
 // ---------------------------------------------------------
-// [설정] Firebase 초기화 (Gemini 환경 호환성 패치 적용)
+// [설정] Firebase 초기화 (안정성 강화 버전)
 // ---------------------------------------------------------
-// 사용자의 원래 설정은 배포 시 사용하세요. 
-// 현재 미리보기 환경에서는 아래 설정이 필수입니다.
 const getFirebaseConfig = () => {
+  // 1. 미리보기 환경 (Gemini Preview) 감지
   if (typeof __firebase_config !== 'undefined') {
     return JSON.parse(__firebase_config);
   }
-  // Fallback (사용자가 제공한 설정, 로컬 환경용)
+  
+  // 2. 로컬 개발 환경 또는 배포 환경용 (사용자 설정)
+  // 주의: Firebase 콘솔 > Authentication > Settings > Authorized Domains에 
+  // 현재 호스팅 도메인이 등록되어 있어야 로그인이 작동합니다.
   return {
     apiKey: "AIzaSyApqIy9DDNZEIb5MIUdWGWSXpRfZtxc1u4",
     authDomain: "car-352f0.firebaseapp.com",
@@ -48,16 +50,18 @@ const getFirebaseConfig = () => {
   };
 };
 
-const app = initializeApp(getFirebaseConfig());
+// 앱이 이미 초기화되었는지 확인 (중복 초기화 방지)
+const app = !getApps().length ? initializeApp(getFirebaseConfig()) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Gemini 환경 변수: 앱별 격리된 경로 사용
+// Gemini 환경 변수: 앱별 격리된 경로 사용 (없으면 기본값)
 const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// --- Helper: 컬렉션 참조 함수 (경로 수정됨) ---
-// 미리보기 환경에서는 반드시 'artifacts' 하위 경로를 사용해야 권한 오류가 발생하지 않습니다.
+// --- Helper: 컬렉션 참조 함수 ---
+// 데이터 경로 충돌 방지를 위해 환경에 맞는 경로를 생성합니다.
 const getCollection = (colName) => {
+  // 공용 데이터 경로 (규칙 준수)
   return collection(db, 'artifacts', APP_ID, 'public', 'data', colName);
 };
 
@@ -468,7 +472,8 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 
 export default function App() {
   const [user, setUser] = useState(null); 
-  const [authLoading, setAuthLoading] = useState(true); // 로딩 상태 추가
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState(null); // 인증 에러 상태
 
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
@@ -491,24 +496,34 @@ export default function App() {
   // 0. Firebase 인증 (앱 시작 시 필수) - 수정된 로직
   useEffect(() => {
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        try {
-            await signInWithCustomToken(auth, __initial_auth_token);
-        } catch (e) {
-            console.error("Custom token auth failed", e);
-            await signInAnonymously(auth);
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+           await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+           await signInAnonymously(auth);
         }
-      } else {
-        await signInAnonymously(auth);
+      } catch (e) {
+        console.error("Auth failed:", e);
+        // 에러 원인 분석
+        if (e.code === 'auth/unauthorized-domain') {
+          setAuthError('도메인 인증 오류: Firebase 콘솔에서 현재 도메인을 승인해주세요.');
+        } else if (e.code === 'auth/api-key-not-valid') {
+          setAuthError('API 키 오류: 유효하지 않은 Firebase API 키입니다.');
+        } else {
+          setAuthError(`연결 오류: ${e.message}`);
+        }
+      } finally {
+        setAuthLoading(false);
       }
-      setAuthLoading(false); // 인증 완료 후 로딩 해제
     };
     initAuth();
     
-    // Auth 상태 변경 리스너
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-        setUser(u);
-        if (u) setAuthLoading(false); // 만약 리스너가 더 빨리 돌 경우 대비
+        if (u) {
+            setUser(u);
+            setAuthError(null); // 성공 시 에러 클리어
+        }
+        setAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -517,15 +532,23 @@ export default function App() {
   useEffect(() => {
     if (!user || !db) return;
 
-    // 경로 수정된 getCollection 사용
+    // 에러 발생 시 처리 핸들러 추가
+    const handleError = (err) => {
+      console.error("Data fetch error:", err);
+      // 권한 오류가 발생하면 인증 에러로 표시
+      if (err.code === 'permission-denied') {
+        setAuthError('권한 오류: 데이터베이스 접근 권한이 없습니다. (규칙을 확인하세요)');
+      }
+    };
+
     const unsub1 = onSnapshot(query(getCollection("applicants"), orderBy("timestamp", "asc")), 
         (snap) => setApplicants(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-        (err) => console.error("Applicants error:", err)
+        handleError
     );
     
     const unsub2 = onSnapshot(query(getCollection("packages"), orderBy("timestamp", "asc")), 
         (snap) => setPackages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
-        (err) => console.error("Packages error:", err)
+        handleError
     );
 
     return () => { unsub1(); unsub2(); };
@@ -553,7 +576,8 @@ export default function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!db || !user) { alert("잠시만 기다려주세요 (연결 중)"); return; }
+    if (authError) { alert(`오류 발생: ${authError}`); return; }
+    if (!db || !user) { alert("잠시만 기다려주세요 (서버 연결 중)"); return; }
     if (!name || pin.length !== 4) { alert('이름과 비밀번호 4자리를 입력해주세요.'); return; }
     try {
         await addDoc(getCollection("applicants"), {
@@ -580,12 +604,29 @@ export default function App() {
   const openPackageModal = () => { setIsDoorOpen(true); setTimeout(() => setShowPackageModal(true), 800); };
   const closePackageModal = () => { setShowPackageModal(false); setIsDoorOpen(false); };
 
-  // 로딩 화면 (Auth 대기 중일 때 표시)
+  // 로딩 화면
   if (authLoading) {
       return (
           <div className="flex flex-col items-center justify-center min-h-screen bg-[#F2F4F6] gap-4">
               <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
               <p className="text-slate-500 font-medium animate-pulse">시스템 연결 중...</p>
+          </div>
+      );
+  }
+
+  // 에러 발생 시 전체 화면 차단 및 메시지 표시
+  if (authError) {
+      return (
+          <div className="flex flex-col items-center justify-center min-h-screen bg-[#F2F4F6] p-6 text-center">
+              <WifiOff className="w-16 h-16 text-red-400 mb-4" />
+              <h2 className="text-xl font-bold text-slate-800 mb-2">서버 연결 실패</h2>
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-red-100 max-w-md">
+                  <p className="text-red-500 font-medium text-sm mb-2">{authError}</p>
+                  <p className="text-xs text-gray-500">
+                    * 미리보기 환경에서는 Gemini가 제공하는 설정을 사용해야 합니다.<br/>
+                    * 로컬 환경이라면 Firebase Console에서 도메인을 승인해주세요.
+                  </p>
+              </div>
           </div>
       );
   }

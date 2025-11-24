@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn } from 'lucide-react';
+import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -62,6 +62,99 @@ const getDocRef = (colName, docId) => {
 };
 
 // --- Components ---
+
+// [NEW] 날씨 위젯 컴포넌트
+const WeatherWidget = () => {
+  const [weather, setWeather] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        // 창원시 진해구 좌표: 위도 35.15, 경도 128.70
+        const response = await fetch(
+          "https://api.open-meteo.com/v1/forecast?latitude=35.1485&longitude=128.7056&current=temperature_2m,relative_humidity_2m,weather_code,is_day,wind_speed_10m&timezone=Asia%2FTokyo"
+        );
+        const data = await response.json();
+        setWeather(data.current);
+      } catch (error) {
+        console.error("Weather fetch failed:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchWeather();
+    // 30분마다 갱신
+    const interval = setInterval(fetchWeather, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading || !weather) return null;
+
+  const { temperature_2m, weather_code, is_day, wind_speed_10m } = weather;
+
+  // 날씨 상태 분석 로직
+  const getWeatherStatus = () => {
+    let emoji = is_day ? "☀️" : "🌙";
+    let message = "오늘도 안전운행 하세요!";
+    let bgClass = is_day ? "bg-blue-50 text-blue-800" : "bg-indigo-50 text-indigo-800";
+    let icon = is_day ? <Sun className="w-4 h-4 text-orange-500" /> : <Moon className="w-4 h-4 text-indigo-500" />;
+
+    // 1. 강수 확인 (비/눈)
+    // WMO 코드: 51-67(비), 71-77(눈), 80-82(소나기), 85-86(눈보라), 95-99(뇌우)
+    if ([71, 73, 75, 77, 85, 86].includes(weather_code)) {
+      emoji = "❄️";
+      message = "눈이 오네요. 빙판길 조심하세요!";
+      bgClass = "bg-sky-50 text-sky-800";
+      icon = <ThermometerSnowflake className="w-4 h-4 text-sky-500" />;
+    } else if ([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(weather_code)) {
+      emoji = "🌧️";
+      message = "비가 내립니다. 빗길 감속 운전!";
+      bgClass = "bg-slate-100 text-slate-800";
+      icon = <Cloud className="w-4 h-4 text-slate-500" />;
+    }
+
+    // 2. 바람 확인 (20km/h 이상이면 바람 강조)
+    if (wind_speed_10m > 20) {
+      emoji = "💨";
+      message = message === "오늘도 안전운행 하세요!" ? "바람이 많이 붑니다. 안전에 유의하세요." : message;
+      icon = <Wind className="w-4 h-4 text-gray-500" />;
+    }
+
+    // 3. 기온 확인 (5도 이하 추움)
+    if (temperature_2m <= 5) {
+      if (![71, 73, 75, 77, 85, 86].includes(weather_code)) { // 눈 오는 날은 눈 메시지 우선
+        emoji = emoji === "☀️" || emoji === "🌙" ? "🥶" : emoji;
+        message = message === "오늘도 안전운행 하세요!" ? "날씨가 춥습니다. 따뜻하게 입으세요." : message;
+      }
+    }
+
+    return { emoji, message, bgClass, icon };
+  };
+
+  const status = getWeatherStatus();
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      className={`mx-4 mt-2 px-4 py-2 rounded-xl flex items-center justify-between shadow-sm border border-opacity-50 ${status.bgClass} backdrop-blur-sm`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xl">{status.emoji}</span>
+        <div className="flex flex-col">
+          <span className="text-[10px] opacity-70 font-semibold flex items-center gap-1">창원시 진해구 {status.icon}</span>
+          <span className="text-xs font-bold">{status.message}</span>
+        </div>
+      </div>
+      <div className="text-lg font-bold tracking-tight">
+        {Math.round(temperature_2m)}°
+      </div>
+    </motion.div>
+  );
+};
+
 
 // 1. Canvas 기반 스타렉스 컴포넌트
 const StarexVan = ({ isDoorOpen }) => {
@@ -601,10 +694,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F2F4F6] text-[#191F28] font-sans pb-32 relative">
       <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-blue-100/50 to-transparent pointer-events-none" />
-      <header className="fixed top-0 w-full z-50 bg-[#F2F4F6]/80 backdrop-blur-md px-5 py-3 flex justify-between items-center">
+      <header className="fixed top-0 w-full z-50 bg-[#F2F4F6]/80 backdrop-blur-md px-5 py-3 flex justify-between items-center transition-all duration-300">
         <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold text-slate-800">59전대 복지차</h1>
-            <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border"><History className="w-4 h-4" /></button>
+            <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border hover:bg-gray-50"><History className="w-4 h-4" /></button>
         </div>
         <div className="flex items-center gap-2">
             {isGuest && (
@@ -617,6 +710,9 @@ export default function App() {
       </header>
 
       <div className="pt-16 relative">
+          {/* 날씨 위젯 추가 위치 */}
+          <WeatherWidget />
+
           <StarexVan isDoorOpen={isDoorOpen} />
           <div className="absolute bottom-4 left-0 w-full flex justify-center z-10">
               <button onClick={openPackageModal} className="bg-white/90 backdrop-blur border border-orange-200 shadow-lg px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold text-orange-600 hover:scale-105 transition-transform">

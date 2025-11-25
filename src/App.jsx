@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake } from 'lucide-react';
+import { Lock, Unlock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake, Trash2, Check, XCircle } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -556,12 +556,52 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
     );
 };
 
+// [NEW] 관리자 로그인 모달
+const AdminLoginModal = ({ onClose, onSuccess }) => {
+    const [pwd, setPwd] = useState('');
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        if(pwd === 'dltjwls1!') {
+            onSuccess();
+        } else {
+            alert('비밀번호가 일치하지 않습니다.');
+            setPwd('');
+        }
+    };
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl relative z-10">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400"><X className="w-5 h-5"/></button>
+                <div className="flex flex-col items-center mb-6">
+                    <div className="bg-slate-100 p-3 rounded-full mb-3"><Lock className="w-6 h-6 text-slate-700"/></div>
+                    <h3 className="font-bold text-lg">관리자 로그인</h3>
+                    <p className="text-xs text-gray-400">관리자 권한으로 데이터를 수정/삭제합니다.</p>
+                </div>
+                <form onSubmit={handleSubmit} className="space-y-3">
+                    <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} className="w-full bg-gray-50 border px-4 py-3 rounded-xl text-center tracking-widest" placeholder="비밀번호" autoFocus />
+                    <button type="submit" className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl">로그인</button>
+                </form>
+            </motion.div>
+        </div>
+    );
+};
+
 // --- Main App ---
 
 export default function App() {
   const [user, setUser] = useState(null); 
   const [isGuest, setIsGuest] = useState(false); // 게스트 모드 상태
   const [authLoading, setAuthLoading] = useState(true);
+
+  // 관리자 상태
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+
+  // 편집 상태
+  const [editingId, setEditingId] = useState(null);
+  const [editingType, setEditingType] = useState(null); // 'ride' or 'package'
+  const [editData, setEditData] = useState({}); // 수정할 임시 데이터
 
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
@@ -579,7 +619,8 @@ export default function App() {
   const [showPackageModal, setShowPackageModal] = useState(false);
   const [isDoorOpen, setIsDoorOpen] = useState(false);
 
-  const ranks = ['이병', '일병', '상병', '병장'];
+  const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '군무원'];
+  const applicantRanks = ['이병', '일병', '상병', '병장'];
 
   // 0. Firebase 인증 (자동 게스트 모드 전환 로직 포함)
   useEffect(() => {
@@ -678,6 +719,39 @@ export default function App() {
     } else { alert('비번 불일치'); setCancelPin(''); }
   };
 
+  // 관리자 권한 삭제
+  const adminDelete = async (id, type) => {
+      if (!confirm("관리자 권한으로 삭제하시겠습니까?")) return;
+      try {
+          const colName = type === 'package' ? "packages" : "applicants";
+          await deleteDoc(getDocRef(colName, id));
+      } catch(e) { alert("삭제 실패: " + e.message); }
+  };
+
+  // 관리자 수정 시작
+  const startEdit = (item, type) => {
+      setEditingId(item.id);
+      setEditingType(type);
+      setEditData({ ...item }); // 기존 데이터 복사
+  };
+
+  // 관리자 수정 저장
+  const saveEdit = async () => {
+      if(!editingId || !editData) return;
+      try {
+          const colName = editingType === 'package' ? "packages" : "applicants";
+          // 업데이트할 필드만 추출 (id, timestamp 등 제외)
+          const { name, rank, count } = editData;
+          const updatePayload = { name, rank };
+          if(count !== undefined) updatePayload.count = Number(count);
+
+          await updateDoc(getDocRef(colName, editingId), updatePayload);
+          setEditingId(null);
+          setEditingType(null);
+          setEditData({});
+      } catch(e) { alert("수정 실패: " + e.message); }
+  };
+
   const openPackageModal = () => { setIsDoorOpen(true); setTimeout(() => setShowPackageModal(true), 800); };
   const closePackageModal = () => { setShowPackageModal(false); setIsDoorOpen(false); };
 
@@ -697,7 +771,16 @@ export default function App() {
       <header className="fixed top-0 w-full z-50 bg-[#F2F4F6]/80 backdrop-blur-md px-5 py-3 flex justify-between items-center transition-all duration-300">
         <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold text-slate-800">59전대 복지차</h1>
-            <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border hover:bg-gray-50"><History className="w-4 h-4" /></button>
+            <div className="flex gap-1">
+                <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border hover:bg-gray-50"><History className="w-4 h-4" /></button>
+                {/* 관리자 로그인 버튼 */}
+                <button 
+                    onClick={() => isAdmin ? setIsAdmin(false) : setShowAdminLogin(true)} 
+                    className={`p-1.5 rounded-full shadow-sm border transition-colors ${isAdmin ? 'bg-slate-800 text-white border-slate-800' : 'bg-white hover:bg-gray-50'}`}
+                >
+                    {isAdmin ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                </button>
+            </div>
         </div>
         <div className="flex items-center gap-2">
             {isGuest && (
@@ -727,7 +810,7 @@ export default function App() {
           <p className="text-gray-400 text-sm mb-6">오늘 운행하는 복지차에 탑승하시나요?</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div><label className="text-xs text-gray-400 ml-1">이름</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="홍길동" className="w-full bg-gray-50 rounded-xl px-4 py-3" /></div>
-            <div><label className="text-xs text-gray-400 ml-1">계급</label><div className="grid grid-cols-4 gap-2">{ranks.map((r) => (<button key={r} type="button" onClick={() => setRank(r)} className={`flex flex-col items-center p-2 rounded-xl border ${rank === r ? 'bg-blue-50 border-blue-500' : 'bg-white'}`}><div className="scale-75"><RankBadge rank={r} /></div><span className="text-xs">{r}</span></button>))}</div></div>
+            <div><label className="text-xs text-gray-400 ml-1">계급</label><div className="grid grid-cols-4 gap-2">{applicantRanks.map((r) => (<button key={r} type="button" onClick={() => setRank(r)} className={`flex flex-col items-center p-2 rounded-xl border ${rank === r ? 'bg-blue-50 border-blue-500' : 'bg-white'}`}><div className="scale-75"><RankBadge rank={r} /></div><span className="text-xs">{r}</span></button>))}</div></div>
             <div><label className="text-xs text-gray-400 ml-1">비밀번호 (4자리)</label><div className="relative"><input type="password" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0000" className="w-full bg-gray-50 rounded-xl px-4 py-3 tracking-widest" /><ShieldCheck className="absolute right-4 top-3.5 text-gray-300 w-5 h-5" /></div></div>
             <button type="submit" className="w-full bg-[#3182F6] text-white font-bold py-4 rounded-xl mt-4">탑승 신청하기</button>
           </form>
@@ -741,12 +824,38 @@ export default function App() {
                     {applicants.length === 0 ? <div className="text-center text-gray-300 py-6 text-sm border-2 border-dashed rounded-xl">신청자 없음</div> : 
                         applicants.map((app) => (
                         <motion.li layout key={app.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white p-3 rounded-2xl shadow-sm border flex flex-col">
-                            <div className="flex justify-between items-center">
-                                <div className="flex gap-2 items-center"><RankBadge rank={app.rank}/><div className="text-sm font-bold">{app.name}</div></div>
-                                <button onClick={() => { setCancelId(cancelId === app.id ? null : app.id); setCancelType('ride'); }} className="text-xs text-gray-400 underline">취소</button>
-                            </div>
-                            {cancelId === app.id && cancelType === 'ride' && (
-                                <div className="mt-2 flex gap-1 bg-gray-50 p-1.5 rounded-lg"><input type="password" maxLength={4} className="bg-transparent flex-1 text-xs px-1" value={cancelPin} onChange={e=>setCancelPin(e.target.value)} placeholder="비번"/><button onClick={()=>confirmCancel(app.id, app.pin, 'ride')} className="bg-red-500 text-white text-[10px] px-2 rounded">확인</button></div>
+                            {editingId === app.id && editingType === 'ride' ? (
+                                // 수정 모드 UI (탑승)
+                                <div className="space-y-2">
+                                    <div className="flex gap-2">
+                                        <select className="bg-gray-50 border rounded text-xs p-1" value={editData.rank} onChange={e=>setEditData({...editData, rank: e.target.value})}>
+                                            {applicantRanks.map(r => <option key={r} value={r}>{r}</option>)}
+                                        </select>
+                                        <input className="bg-gray-50 border rounded text-xs p-1 flex-1" value={editData.name} onChange={e=>setEditData({...editData, name: e.target.value})} />
+                                    </div>
+                                    <div className="flex gap-2 justify-end">
+                                        <button onClick={() => setEditingId(null)} className="p-1 text-gray-400"><XCircle className="w-5 h-5"/></button>
+                                        <button onClick={saveEdit} className="p-1 text-blue-500"><Check className="w-5 h-5"/></button>
+                                    </div>
+                                </div>
+                            ) : (
+                                // 일반 보기 UI (탑승)
+                                <>
+                                <div className="flex justify-between items-center">
+                                    <div className="flex gap-2 items-center"><RankBadge rank={app.rank}/><div className="text-sm font-bold">{app.name}</div></div>
+                                    {isAdmin ? (
+                                        <div className="flex gap-2">
+                                            <button onClick={() => startEdit(app, 'ride')} className="text-gray-400 hover:text-blue-500"><Edit2 className="w-4 h-4"/></button>
+                                            <button onClick={() => adminDelete(app.id, 'ride')} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={() => { setCancelId(cancelId === app.id ? null : app.id); setCancelType('ride'); }} className="text-xs text-gray-400 underline">취소</button>
+                                    )}
+                                </div>
+                                {!isAdmin && cancelId === app.id && cancelType === 'ride' && (
+                                    <div className="mt-2 flex gap-1 bg-gray-50 p-1.5 rounded-lg"><input type="password" maxLength={4} className="bg-transparent flex-1 text-xs px-1" value={cancelPin} onChange={e=>setCancelPin(e.target.value)} placeholder="비번"/><button onClick={()=>confirmCancel(app.id, app.pin, 'ride')} className="bg-red-500 text-white text-[10px] px-2 rounded">확인</button></div>
+                                )}
+                                </>
                             )}
                         </motion.li>
                         ))
@@ -762,16 +871,43 @@ export default function App() {
                     {packages.length === 0 ? <div className="text-center text-gray-300 py-6 text-sm border-2 border-dashed rounded-xl">수령자 없음</div> : 
                         packages.map((pkg) => (
                         <motion.li layout key={pkg.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white p-3 rounded-2xl shadow-sm border border-orange-100 flex flex-col">
-                            <div className="flex justify-between items-center">
-                                <div className="flex gap-2 items-center">
-                                    <div className="bg-orange-100 p-1 rounded"><Package className="w-3 h-3 text-orange-500"/></div>
-                                    <div className="text-sm font-bold">{pkg.name} <span className="text-xs font-normal text-gray-400">({pkg.rank})</span></div>
-                                    <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count}개</span>
+                             {editingId === pkg.id && editingType === 'package' ? (
+                                // 수정 모드 UI (택배)
+                                <div className="space-y-2">
+                                    <div className="flex gap-2">
+                                        <select className="bg-gray-50 border rounded text-xs p-1" value={editData.rank} onChange={e=>setEditData({...editData, rank: e.target.value})}>
+                                            {ranks.map(r => <option key={r} value={r}>{r}</option>)}
+                                        </select>
+                                        <input className="bg-gray-50 border rounded text-xs p-1 flex-1" value={editData.name} onChange={e=>setEditData({...editData, name: e.target.value})} />
+                                        <input type="number" className="bg-gray-50 border rounded text-xs p-1 w-12" value={editData.count} onChange={e=>setEditData({...editData, count: e.target.value})} />
+                                    </div>
+                                    <div className="flex gap-2 justify-end">
+                                        <button onClick={() => setEditingId(null)} className="p-1 text-gray-400"><XCircle className="w-5 h-5"/></button>
+                                        <button onClick={saveEdit} className="p-1 text-blue-500"><Check className="w-5 h-5"/></button>
+                                    </div>
                                 </div>
-                                <button onClick={() => { setCancelId(cancelId === pkg.id ? null : pkg.id); setCancelType('package'); }} className="text-xs text-gray-400 underline">취소</button>
-                            </div>
-                            {cancelId === pkg.id && cancelType === 'package' && (
-                                <div className="mt-2 flex gap-1 bg-gray-50 p-1.5 rounded-lg"><input type="password" maxLength={4} className="bg-transparent flex-1 text-xs px-1" value={cancelPin} onChange={e=>setCancelPin(e.target.value)} placeholder="비번"/><button onClick={()=>confirmCancel(pkg.id, pkg.pin, 'package')} className="bg-red-500 text-white text-[10px] px-2 rounded">확인</button></div>
+                            ) : (
+                                // 일반 보기 UI (택배)
+                                <>
+                                <div className="flex justify-between items-center">
+                                    <div className="flex gap-2 items-center">
+                                        <div className="bg-orange-100 p-1 rounded"><Package className="w-3 h-3 text-orange-500"/></div>
+                                        <div className="text-sm font-bold">{pkg.name} <span className="text-xs font-normal text-gray-400">({pkg.rank})</span></div>
+                                        <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count}개</span>
+                                    </div>
+                                    {isAdmin ? (
+                                        <div className="flex gap-2">
+                                            <button onClick={() => startEdit(pkg, 'package')} className="text-gray-400 hover:text-blue-500"><Edit2 className="w-4 h-4"/></button>
+                                            <button onClick={() => adminDelete(pkg.id, 'package')} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={() => { setCancelId(cancelId === pkg.id ? null : pkg.id); setCancelType('package'); }} className="text-xs text-gray-400 underline">취소</button>
+                                    )}
+                                </div>
+                                {!isAdmin && cancelId === pkg.id && cancelType === 'package' && (
+                                    <div className="mt-2 flex gap-1 bg-gray-50 p-1.5 rounded-lg"><input type="password" maxLength={4} className="bg-transparent flex-1 text-xs px-1" value={cancelPin} onChange={e=>setCancelPin(e.target.value)} placeholder="비번"/><button onClick={()=>confirmCancel(pkg.id, pkg.pin, 'package')} className="bg-red-500 text-white text-[10px] px-2 rounded">확인</button></div>
+                                )}
+                                </>
                             )}
                         </motion.li>
                         ))
@@ -789,6 +925,7 @@ export default function App() {
       {showHistory && <HistoryModal onClose={() => setShowHistory(false)} user={user} />}
       {showCrewModal && <CrewModal onClose={() => setShowCrewModal(false)} user={user} />}
       {showPackageModal && <PackageModal onClose={closePackageModal} onSuccess={closePackageModal} user={user} />}
+      {showAdminLogin && <AdminLoginModal onClose={() => setShowAdminLogin(false)} onSuccess={() => { setIsAdmin(true); setShowAdminLogin(false); }} />}
     </div>
   );
 }

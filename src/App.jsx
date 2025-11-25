@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, Unlock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake, Trash2, Check, XCircle } from 'lucide-react';
+import { Lock, Unlock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake, Trash2, Check, XCircle, Info, Smartphone } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -61,9 +61,43 @@ const getDocRef = (colName, docId) => {
   return doc(db, 'artifacts', APP_ID, 'public', 'data', colName, docId);
 };
 
+// [NEW] 클라이언트 정보 수집 함수
+const collectClientInfo = async () => {
+    let info = {
+        ip: '알수없음',
+        city: '알수없음',
+        region: '',
+        userAgent: navigator.userAgent,
+        device: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 'Mobile' : 'PC'
+    };
+
+    try {
+        // 무료 IP 정보 API 사용 (ipapi.co)
+        // 타임아웃 3초 설정
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        const response = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+        const data = await response.json();
+        
+        clearTimeout(timeoutId);
+
+        if (data.ip) {
+            info.ip = data.ip;
+            info.city = data.city || '';
+            info.region = data.region || '';
+            info.org = data.org || ''; // 통신사 정보 등
+        }
+    } catch (e) {
+        console.warn("IP info fetch failed:", e);
+        // 실패해도 신청은 진행되어야 하므로 에러는 무시하고 기본값 반환
+    }
+    return info;
+};
+
 // --- Components ---
 
-// [NEW] 날씨 위젯 컴포넌트
+// 날씨 위젯 컴포넌트
 const WeatherWidget = () => {
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -71,7 +105,6 @@ const WeatherWidget = () => {
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        // 창원시 진해구 좌표: 위도 35.15, 경도 128.70
         const response = await fetch(
           "https://api.open-meteo.com/v1/forecast?latitude=35.1485&longitude=128.7056&current=temperature_2m,relative_humidity_2m,weather_code,is_day,wind_speed_10m&timezone=Asia%2FTokyo"
         );
@@ -85,7 +118,6 @@ const WeatherWidget = () => {
     };
 
     fetchWeather();
-    // 30분마다 갱신
     const interval = setInterval(fetchWeather, 30 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
@@ -94,15 +126,12 @@ const WeatherWidget = () => {
 
   const { temperature_2m, weather_code, is_day, wind_speed_10m } = weather;
 
-  // 날씨 상태 분석 로직
   const getWeatherStatus = () => {
     let emoji = is_day ? "☀️" : "🌙";
     let message = "오늘도 안전운행 하세요!";
     let bgClass = is_day ? "bg-blue-50 text-blue-800" : "bg-indigo-50 text-indigo-800";
     let icon = is_day ? <Sun className="w-4 h-4 text-orange-500" /> : <Moon className="w-4 h-4 text-indigo-500" />;
 
-    // 1. 강수 확인 (비/눈)
-    // WMO 코드: 51-67(비), 71-77(눈), 80-82(소나기), 85-86(눈보라), 95-99(뇌우)
     if ([71, 73, 75, 77, 85, 86].includes(weather_code)) {
       emoji = "❄️";
       message = "눈이 오네요. 빙판길 조심하세요!";
@@ -115,16 +144,14 @@ const WeatherWidget = () => {
       icon = <Cloud className="w-4 h-4 text-slate-500" />;
     }
 
-    // 2. 바람 확인 (20km/h 이상이면 바람 강조)
     if (wind_speed_10m > 20) {
       emoji = "💨";
       message = message === "오늘도 안전운행 하세요!" ? "바람이 많이 붑니다. 안전에 유의하세요." : message;
       icon = <Wind className="w-4 h-4 text-gray-500" />;
     }
 
-    // 3. 기온 확인 (5도 이하 추움)
     if (temperature_2m <= 5) {
-      if (![71, 73, 75, 77, 85, 86].includes(weather_code)) { // 눈 오는 날은 눈 메시지 우선
+      if (![71, 73, 75, 77, 85, 86].includes(weather_code)) { 
         emoji = emoji === "☀️" || emoji === "🌙" ? "🥶" : emoji;
         message = message === "오늘도 안전운행 하세요!" ? "날씨가 춥습니다. 따뜻하게 입으세요." : message;
       }
@@ -380,7 +407,6 @@ const HistoryModal = ({ onClose, user }) => {
   const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
 
   useEffect(() => {
-    // !user 체크 제거: 게스트 모드에서도 데이터 조회 허용 (Firestore 규칙이 true이므로)
     if (!db) return;
     const q = query(getCollection("history"), orderBy("timestamp", "desc"));
     
@@ -488,7 +514,6 @@ const CrewModal = ({ onClose, user }) => {
     const [nco, setNco] = useState({ name: '', rank: '하사' });
     const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
     useEffect(() => {
-        // !user 체크 제거
         if (!db) return;
         const unsub = onSnapshot(getDocRef("settings", "crew"), (doc) => {
             if (doc.exists()) { setDriver(doc.data().driver); setNco(doc.data().nco); }
@@ -521,18 +546,21 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        // !user 제거: 게스트도 쓰기 가능
         if (!db) { alert("연결 대기중..."); return; }
         if(!form.name || form.pin.length !== 4) { alert('이름과 4자리 비밀번호를 입력해주세요.'); return; }
 
         try {
+            // [NEW] 접속 정보 수집
+            const meta = await collectClientInfo();
+
             await addDoc(getCollection("packages"), {
                 name: form.name,
                 rank: form.rank,
                 count: Number(form.count),
                 pin: form.pin,
                 time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-                timestamp: serverTimestamp()
+                timestamp: serverTimestamp(),
+                meta: meta // 메타 데이터 저장
             });
             onSuccess();
         } catch (error) {
@@ -549,6 +577,13 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
                     <div><label className="text-xs text-gray-400">계급 & 이름</label><div className="flex gap-2"><select value={form.rank} onChange={e=>setForm({...form, rank: e.target.value})} className="bg-gray-50 p-3 rounded-xl">{ranks.map(r=><option key={r} value={r}>{r}</option>)}</select><input value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="bg-gray-50 p-3 rounded-xl flex-1" placeholder="이름"/></div></div>
                     <div><label className="text-xs text-gray-400">수량 (박스)</label><div className="flex items-center gap-4 bg-gray-50 p-3 rounded-xl"><input type="range" min="1" max="10" value={form.count} onChange={e=>setForm({...form, count: parseInt(e.target.value)})} className="flex-1 accent-orange-500" /><span className="font-bold text-lg w-8 text-center">{form.count}</span></div></div>
                     <div><label className="text-xs text-gray-400">비밀번호 (4자리)</label><input type="password" maxLength={4} value={form.pin} onChange={e=>setForm({...form, pin: e.target.value.replace(/[^0-9]/g, '')})} className="w-full bg-gray-50 p-3 rounded-xl tracking-widest" placeholder="0000"/></div>
+                    
+                    {/* 정보 수집 안내 문구 */}
+                    <div className="bg-gray-100 p-2 rounded text-[10px] text-gray-500 flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3 text-gray-400"/>
+                        부정 이용 방지를 위해 접속 정보(IP, 기기)가 수집됩니다.
+                    </div>
+                    
                     <button type="submit" className="w-full bg-orange-500 text-white font-bold py-4 rounded-xl">신청하기</button>
                 </form>
             </motion.div>
@@ -556,7 +591,7 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
     );
 };
 
-// [NEW] 관리자 로그인 모달
+// 관리자 로그인 모달
 const AdminLoginModal = ({ onClose, onSuccess }) => {
     const [pwd, setPwd] = useState('');
     const handleSubmit = (e) => {
@@ -591,7 +626,7 @@ const AdminLoginModal = ({ onClose, onSuccess }) => {
 
 export default function App() {
   const [user, setUser] = useState(null); 
-  const [isGuest, setIsGuest] = useState(false); // 게스트 모드 상태
+  const [isGuest, setIsGuest] = useState(false); 
   const [authLoading, setAuthLoading] = useState(true);
 
   // 관리자 상태
@@ -600,8 +635,8 @@ export default function App() {
 
   // 편집 상태
   const [editingId, setEditingId] = useState(null);
-  const [editingType, setEditingType] = useState(null); // 'ride' or 'package'
-  const [editData, setEditData] = useState({}); // 수정할 임시 데이터
+  const [editingType, setEditingType] = useState(null); 
+  const [editData, setEditData] = useState({}); 
 
   const [name, setName] = useState('');
   const [rank, setRank] = useState('이병');
@@ -622,7 +657,6 @@ export default function App() {
   const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '군무원'];
   const applicantRanks = ['이병', '일병', '상병', '병장'];
 
-  // 0. Firebase 인증 (자동 게스트 모드 전환 로직 포함)
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -633,8 +667,6 @@ export default function App() {
         }
       } catch (e) {
         console.warn("Auth failed, switching to Guest Mode:", e);
-        // 인증 실패 시 게스트 유저로 설정하여 앱 실행 보장
-        // (Firestore 규칙이 true이므로 데이터 접근 가능)
         setUser({ uid: "guest_user", isAnonymous: true });
         setIsGuest(true);
       } finally {
@@ -648,15 +680,12 @@ export default function App() {
             setUser(u);
             setIsGuest(false);
         }
-        // 이미 게스트 모드라면 덮어쓰지 않음
         setAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // 1. 데이터 리스너
   useEffect(() => {
-    // !user 체크 제거: 게스트 모드에서도 작동하도록 수정
     if (!db) return;
 
     const unsub1 = onSnapshot(query(getCollection("applicants"), orderBy("timestamp", "asc")), 
@@ -670,12 +699,10 @@ export default function App() {
     );
 
     return () => { unsub1(); unsub2(); };
-  }, [user]); // user가 변경될 때 리스너 재설정
+  }, [user]);
 
-  // 2. 자동 아카이빙
   useEffect(() => {
       const checkArchive = async () => {
-        // !user 제거
         if (!db) return;
         try {
             const today = new Date().toLocaleDateString();
@@ -690,18 +717,23 @@ export default function App() {
             }
         } catch (e) { console.warn("Auto-archive skipped:", e); }
       };
-      if (user || isGuest) checkArchive(); // 유저가 있거나 게스트면 실행
+      if (user || isGuest) checkArchive(); 
   }, [user, isGuest]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!db) { alert("잠시만 기다려주세요 (서버 연결 중)"); return; }
     if (!name || pin.length !== 4) { alert('이름과 비밀번호 4자리를 입력해주세요.'); return; }
+    
     try {
+        // [NEW] 접속 정보 수집
+        const meta = await collectClientInfo();
+
         await addDoc(getCollection("applicants"), {
             name, rank, pin,
             time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-            timestamp: serverTimestamp()
+            timestamp: serverTimestamp(),
+            meta: meta // 메타 데이터 저장
         });
         setName(''); setPin('');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -719,7 +751,6 @@ export default function App() {
     } else { alert('비번 불일치'); setCancelPin(''); }
   };
 
-  // 관리자 권한 삭제
   const adminDelete = async (id, type) => {
       if (!confirm("관리자 권한으로 삭제하시겠습니까?")) return;
       try {
@@ -728,19 +759,16 @@ export default function App() {
       } catch(e) { alert("삭제 실패: " + e.message); }
   };
 
-  // 관리자 수정 시작
   const startEdit = (item, type) => {
       setEditingId(item.id);
       setEditingType(type);
-      setEditData({ ...item }); // 기존 데이터 복사
+      setEditData({ ...item }); 
   };
 
-  // 관리자 수정 저장
   const saveEdit = async () => {
       if(!editingId || !editData) return;
       try {
           const colName = editingType === 'package' ? "packages" : "applicants";
-          // 업데이트할 필드만 추출 (id, timestamp 등 제외)
           const { name, rank, count } = editData;
           const updatePayload = { name, rank };
           if(count !== undefined) updatePayload.count = Number(count);
@@ -752,10 +780,23 @@ export default function App() {
       } catch(e) { alert("수정 실패: " + e.message); }
   };
 
+  // [NEW] 정보 보기 팝업
+  const showMetaInfo = (meta) => {
+      if (!meta) { alert("저장된 접속 정보가 없습니다."); return; }
+      const infoText = `
+        [접속 정보]
+        • IP: ${meta.ip}
+        • 위치: ${meta.city || '알수없음'} (${meta.region})
+        • 통신/기관: ${meta.org || '알수없음'}
+        • 기기: ${meta.device}
+        • 브라우저: ${meta.userAgent.slice(0, 50)}...
+      `;
+      alert(infoText);
+  };
+
   const openPackageModal = () => { setIsDoorOpen(true); setTimeout(() => setShowPackageModal(true), 800); };
   const closePackageModal = () => { setShowPackageModal(false); setIsDoorOpen(false); };
 
-  // 로딩 화면
   if (authLoading) {
       return (
           <div className="flex flex-col items-center justify-center min-h-screen bg-[#F2F4F6] gap-4">
@@ -773,7 +814,6 @@ export default function App() {
             <h1 className="text-lg font-bold text-slate-800">59전대 복지차</h1>
             <div className="flex gap-1">
                 <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border hover:bg-gray-50"><History className="w-4 h-4" /></button>
-                {/* 관리자 로그인 버튼 */}
                 <button 
                     onClick={() => isAdmin ? setIsAdmin(false) : setShowAdminLogin(true)} 
                     className={`p-1.5 rounded-full shadow-sm border transition-colors ${isAdmin ? 'bg-slate-800 text-white border-slate-800' : 'bg-white hover:bg-gray-50'}`}
@@ -782,18 +822,9 @@ export default function App() {
                 </button>
             </div>
         </div>
-        <div className="flex items-center gap-2">
-            {isGuest && (
-                <span className="text-[10px] text-gray-500 bg-gray-200 px-2 py-1 rounded-full flex items-center gap-1">
-                    <WifiOff className="w-3 h-3"/> 게스트 모드
-                </span>
-            )}
-            <StatusBadge />
-        </div>
       </header>
 
       <div className="pt-16 relative">
-          {/* 날씨 위젯 추가 위치 */}
           <WeatherWidget />
 
           <StarexVan isDoorOpen={isDoorOpen} />
@@ -812,6 +843,13 @@ export default function App() {
             <div><label className="text-xs text-gray-400 ml-1">이름</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="홍길동" className="w-full bg-gray-50 rounded-xl px-4 py-3" /></div>
             <div><label className="text-xs text-gray-400 ml-1">계급</label><div className="grid grid-cols-4 gap-2">{applicantRanks.map((r) => (<button key={r} type="button" onClick={() => setRank(r)} className={`flex flex-col items-center p-2 rounded-xl border ${rank === r ? 'bg-blue-50 border-blue-500' : 'bg-white'}`}><div className="scale-75"><RankBadge rank={r} /></div><span className="text-xs">{r}</span></button>))}</div></div>
             <div><label className="text-xs text-gray-400 ml-1">비밀번호 (4자리)</label><div className="relative"><input type="password" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0000" className="w-full bg-gray-50 rounded-xl px-4 py-3 tracking-widest" /><ShieldCheck className="absolute right-4 top-3.5 text-gray-300 w-5 h-5" /></div></div>
+            
+            {/* 정보 수집 안내 문구 */}
+            <div className="bg-gray-100 p-2 rounded text-[10px] text-gray-500 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-gray-400"/>
+                부정 이용 방지를 위해 접속 정보(IP, 기기)가 수집됩니다.
+            </div>
+
             <button type="submit" className="w-full bg-[#3182F6] text-white font-bold py-4 rounded-xl mt-4">탑승 신청하기</button>
           </form>
         </motion.div>
@@ -825,7 +863,6 @@ export default function App() {
                         applicants.map((app) => (
                         <motion.li layout key={app.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white p-3 rounded-2xl shadow-sm border flex flex-col">
                             {editingId === app.id && editingType === 'ride' ? (
-                                // 수정 모드 UI (탑승)
                                 <div className="space-y-2">
                                     <div className="flex gap-2">
                                         <select className="bg-gray-50 border rounded text-xs p-1" value={editData.rank} onChange={e=>setEditData({...editData, rank: e.target.value})}>
@@ -839,12 +876,13 @@ export default function App() {
                                     </div>
                                 </div>
                             ) : (
-                                // 일반 보기 UI (탑승)
                                 <>
                                 <div className="flex justify-between items-center">
                                     <div className="flex gap-2 items-center"><RankBadge rank={app.rank}/><div className="text-sm font-bold">{app.name}</div></div>
                                     {isAdmin ? (
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-2 items-center">
+                                            {/* [NEW] 관리자 전용 정보 확인 버튼 */}
+                                            <button onClick={() => showMetaInfo(app.meta)} className="text-blue-500 bg-blue-50 p-1 rounded hover:bg-blue-100"><Info className="w-4 h-4"/></button>
                                             <button onClick={() => startEdit(app, 'ride')} className="text-gray-400 hover:text-blue-500"><Edit2 className="w-4 h-4"/></button>
                                             <button onClick={() => adminDelete(app.id, 'ride')} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
                                         </div>
@@ -872,7 +910,6 @@ export default function App() {
                         packages.map((pkg) => (
                         <motion.li layout key={pkg.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="bg-white p-3 rounded-2xl shadow-sm border border-orange-100 flex flex-col">
                              {editingId === pkg.id && editingType === 'package' ? (
-                                // 수정 모드 UI (택배)
                                 <div className="space-y-2">
                                     <div className="flex gap-2">
                                         <select className="bg-gray-50 border rounded text-xs p-1" value={editData.rank} onChange={e=>setEditData({...editData, rank: e.target.value})}>
@@ -887,7 +924,6 @@ export default function App() {
                                     </div>
                                 </div>
                             ) : (
-                                // 일반 보기 UI (택배)
                                 <>
                                 <div className="flex justify-between items-center">
                                     <div className="flex gap-2 items-center">
@@ -896,7 +932,9 @@ export default function App() {
                                         <span className="text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded ml-1">{pkg.count}개</span>
                                     </div>
                                     {isAdmin ? (
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-2 items-center">
+                                            {/* [NEW] 관리자 전용 정보 확인 버튼 */}
+                                            <button onClick={() => showMetaInfo(pkg.meta)} className="text-blue-500 bg-blue-50 p-1 rounded hover:bg-blue-100"><Info className="w-4 h-4"/></button>
                                             <button onClick={() => startEdit(pkg, 'package')} className="text-gray-400 hover:text-blue-500"><Edit2 className="w-4 h-4"/></button>
                                             <button onClick={() => adminDelete(pkg.id, 'package')} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
                                         </div>

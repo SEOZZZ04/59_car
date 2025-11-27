@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useScroll, AnimatePresence } from 'framer-motion';
-import { Lock, Unlock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake, Trash2, Check, XCircle, Info, Smartphone } from 'lucide-react';
+import { Lock, Unlock, ShieldCheck, History, Calendar, Users, UserCheck, X, Car, Award, Package, Box, AlertCircle, Edit2, Loader2, WifiOff, RefreshCw, LogIn, Cloud, Sun, Moon, Wind, ThermometerSnowflake, Trash2, Check, XCircle, Info, Smartphone, FileText, ScrollText } from 'lucide-react';
 
 // --- Firebase Imports ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -28,7 +28,7 @@ import {
 } from "firebase/firestore";
 
 // ---------------------------------------------------------
-// [설정] Firebase 초기화 (사용자 요청 코드 적용)
+// [설정] Firebase 초기화
 // ---------------------------------------------------------
 const getFirebaseConfig = () => {
   if (typeof __firebase_config !== 'undefined') {
@@ -69,13 +69,13 @@ const getRankScore = (rankString) => {
     '상사': 90,
     '중사': 80,
     '하사': 70,
-    '군무원': 60, // 군무원 위치는 임의 설정 (간부급)
+    '군무원': 60, 
     '병장': 40,
     '상병': 30,
     '일병': 20,
     '이병': 10
   };
-  return scores[rankString] || 0; // 목록에 없으면 0점
+  return scores[rankString] || 0; 
 };
 
 // [NEW] 데이터 정렬 함수 (계급 내림차순 -> 이름 오름차순)
@@ -84,9 +84,8 @@ const sortDataByRank = (data) => {
     const scoreA = getRankScore(a.rank);
     const scoreB = getRankScore(b.rank);
     if (scoreA !== scoreB) {
-      return scoreB - scoreA; // 점수 높은 순(계급 높은 순)
+      return scoreB - scoreA; 
     }
-    // 계급이 같으면 이름 가나다순
     return (a.name || '').localeCompare(b.name || '');
   });
 };
@@ -103,8 +102,6 @@ const collectClientInfo = async () => {
     };
 
     try {
-        // 무료 IP 정보 API 사용 (ipapi.co)
-        // 타임아웃 3초 설정
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000);
         
@@ -117,11 +114,10 @@ const collectClientInfo = async () => {
             info.ip = data.ip;
             info.city = data.city || '';
             info.region = data.region || '';
-            info.org = data.org || ''; // 통신사 정보 등
+            info.org = data.org || ''; 
         }
     } catch (e) {
         console.warn("IP info fetch failed:", e);
-        // 실패해도 신청은 진행되어야 하므로 에러는 무시하고 기본값 반환
     }
     return info;
 };
@@ -428,6 +424,83 @@ const StatusBadge = () => {
   return <div className={`${status.color} text-white text-[10px] sm:text-xs px-3 py-1.5 rounded-full font-bold transition-colors shadow-md whitespace-nowrap`}>{status.text}</div>;
 };
 
+// [NEW] 개발 정보 및 업데이트 히스토리 모달
+const DevInfoModal = ({ onClose, isAdmin }) => {
+    const [updates, setUpdates] = useState([]);
+    const [newUpdate, setNewUpdate] = useState({ date: new Date().toISOString().split('T')[0], content: '' });
+
+    useEffect(() => {
+        if (!db) return;
+        const q = query(getCollection("updates"), orderBy("date", "desc"));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setUpdates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    const handleAdd = async () => {
+        if (!newUpdate.content) return alert("내용을 입력해주세요.");
+        try {
+            await addDoc(getCollection("updates"), {
+                ...newUpdate,
+                timestamp: serverTimestamp()
+            });
+            setNewUpdate({ ...newUpdate, content: '' });
+        } catch (e) { alert("추가 실패: " + e.message); }
+    };
+
+    const handleDelete = async (id) => {
+        if (!confirm("삭제하시겠습니까?")) return;
+        try {
+            await deleteDoc(getDocRef("updates", id));
+        } catch (e) { alert("삭제 실패"); }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative z-10 flex flex-col max-h-[70vh]">
+                <div className="bg-slate-800 p-4 flex justify-between items-center shrink-0">
+                    <h3 className="text-white font-bold text-lg flex items-center gap-2"><ScrollText className="w-5 h-5" /> 업데이트 내역</h3>
+                    <button onClick={onClose}><X className="w-6 h-6 text-white" /></button>
+                </div>
+                
+                <div className="p-4 bg-gray-50 flex-1 overflow-y-auto">
+                    {/* 제작자 크레딧 */}
+                    <div className="flex justify-end mb-4">
+                        <span className="text-[10px] bg-slate-200 text-slate-600 px-2 py-1 rounded-full font-bold">
+                            Made by -712기 이서진-
+                        </span>
+                    </div>
+
+                    <div className="space-y-3">
+                        {updates.length === 0 ? <div className="text-center text-gray-400 py-10 text-sm">업데이트 내역이 없습니다.</div> :
+                            updates.map((update) => (
+                                <div key={update.id} className="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className="text-xs font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">{update.date}</span>
+                                        {isAdmin && <button onClick={() => handleDelete(update.id)} className="text-gray-300 hover:text-red-500"><Trash2 className="w-3.5 h-3.5"/></button>}
+                                    </div>
+                                    <p className="text-sm text-slate-700 whitespace-pre-wrap">{update.content}</p>
+                                </div>
+                            ))
+                        }
+                    </div>
+                </div>
+
+                {isAdmin && (
+                    <div className="p-3 bg-white border-t shrink-0 space-y-2">
+                        <div className="text-xs font-bold text-slate-500">새 업데이트 추가 (관리자)</div>
+                        <input type="date" className="w-full bg-gray-50 border rounded p-2 text-xs" value={newUpdate.date} onChange={e=>setNewUpdate({...newUpdate, date: e.target.value})} />
+                        <textarea className="w-full bg-gray-50 border rounded p-2 text-xs h-16 resize-none" placeholder="내용을 입력하세요..." value={newUpdate.content} onChange={e=>setNewUpdate({...newUpdate, content: e.target.value})} />
+                        <button onClick={handleAdd} className="w-full bg-slate-800 text-white py-2 rounded-lg text-xs font-bold">추가하기</button>
+                    </div>
+                )}
+            </motion.div>
+        </div>
+    );
+};
+
 // 4. 기록 모달
 const HistoryModal = ({ onClose, user }) => {
   const [histories, setHistories] = useState([]);
@@ -697,6 +770,8 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showCrewModal, setShowCrewModal] = useState(false);
   const [showPackageModal, setShowPackageModal] = useState(false);
+  // [NEW] 개발 정보 모달 상태
+  const [showDevInfoModal, setShowDevInfoModal] = useState(false);
   const [isDoorOpen, setIsDoorOpen] = useState(false);
 
   const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '군무원'];
@@ -872,6 +947,10 @@ export default function App() {
         <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold text-slate-800">59전대 복지차</h1>
             <div className="flex gap-1">
+                {/* [NEW] 개발 정보 / 업데이트 버튼 */}
+                <button onClick={() => setShowDevInfoModal(true)} className="bg-white p-1.5 rounded-full shadow-sm border hover:bg-gray-50 text-slate-600">
+                    <ScrollText className="w-4 h-4" />
+                </button>
                 <button onClick={() => setShowHistory(true)} className="bg-white p-1.5 rounded-full shadow-sm border hover:bg-gray-50"><History className="w-4 h-4" /></button>
                 <button 
                     onClick={() => isAdmin ? setIsAdmin(false) : setShowAdminLogin(true)} 
@@ -1022,6 +1101,7 @@ export default function App() {
       {showHistory && <HistoryModal onClose={() => setShowHistory(false)} user={user} />}
       {showCrewModal && <CrewModal onClose={() => setShowCrewModal(false)} user={user} />}
       {showPackageModal && <PackageModal onClose={closePackageModal} onSuccess={closePackageModal} user={user} />}
+      {showDevInfoModal && <DevInfoModal onClose={() => setShowDevInfoModal(false)} isAdmin={isAdmin} />}
       {showAdminLogin && <AdminLoginModal onClose={() => setShowAdminLogin(false)} onSuccess={() => { setIsAdmin(true); setShowAdminLogin(false); }} />}
     </div>
   );

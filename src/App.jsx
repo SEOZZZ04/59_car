@@ -842,7 +842,7 @@ export default function App() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div><label className="text-xs text-gray-400 ml-1">이름</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="홍길동" className="w-full bg-gray-50 rounded-xl px-4 py-3" /></div>
             <div><label className="text-xs text-gray-400 ml-1">계급</label><div className="grid grid-cols-4 gap-2">{applicantRanks.map((r) => (<button key={r} type="button" onClick={() => setRank(r)} className={`flex flex-col items-center p-2 rounded-xl border ${rank === r ? 'bg-blue-50 border-blue-500' : 'bg-white'}`}><div className="scale-75"><RankBadge rank={r} /></div><span className="text-xs">{r}</span></button>))}</div></div>
-            <div><label className="text-xs text-gray-400 ml-1">비밀번호 (4자리)</label><div className="relative"><input type="password" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0000" className="w-full bg-gray-50 rounded-xl px-4 py-3 tracking-widest" /><ShieldCheck className="absolute right-4 top-3.5 text-gray-300 w-5 h-5" /></div></div>
+            <div><label className="text-xs text-gray-400 ml-1">본인확인 비밀번호 (4자리)</label><div className="relative"><input type="password" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0000" className="w-full bg-gray-50 rounded-xl px-4 py-3 tracking-widest" /><ShieldCheck className="absolute right-4 top-3.5 text-gray-300 w-5 h-5" /></div></div>
             
             {/* 정보 수집 안내 문구 */}
             <div className="bg-gray-100 p-2 rounded text-[10px] text-gray-500 flex items-center gap-1">

@@ -404,7 +404,7 @@ const HistoryModal = ({ onClose, user }) => {
   const [adminPwd, setAdminPwd] = useState('');
   const [showPwdInput, setShowPwdInput] = useState(null);
   const [editForm, setEditForm] = useState({ driverRank: '', driverName: '', ncoRank: '', ncoName: '' });
-  const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사'];
+  const ranks = ['이병', '일병', '상병', '병장'];
 
   useEffect(() => {
     if (!db) return;
@@ -421,7 +421,7 @@ const HistoryModal = ({ onClose, user }) => {
   };
 
   const verifyPassword = (h) => {
-      if (adminPwd === '수송') {
+      if (adminPwd === 'dltjwls1!') {
          if (h === 'archive') { manualArchive(); } 
          else { setShowPwdInput(null); setEditingId(h.id); setEditForm({ driverRank: h.driver?.rank || '이병', driverName: h.driver?.name || '', ncoRank: h.nco?.rank || '하사', ncoName: h.nco?.name || '' }); }
       } else { alert('관리자 비밀번호 불일치'); setAdminPwd(''); }
@@ -542,7 +542,7 @@ const CrewModal = ({ onClose, user }) => {
 // 6. 택배 수령 신청 모달
 const PackageModal = ({ onClose, onSuccess, user }) => {
     const [form, setForm] = useState({ name: '', rank: '이병', count: 1, pin: '' });
-    const ranks = ['이병', '일병', '상병', '병장', '하사', '중사', '상사', '원사', '군무원'];
+    const ranks = ['이병', '일병', '상병', '병장'];
 
     const handleSubmit = async (e) => {
         e.preventDefault();

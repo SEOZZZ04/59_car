@@ -28,7 +28,7 @@ import {
 } from "firebase/firestore";
 
 // ---------------------------------------------------------
-// [설정] Firebase 초기화
+// [설정] Firebase 초기화 (사용자 요청 코드 적용)
 // ---------------------------------------------------------
 const getFirebaseConfig = () => {
   if (typeof __firebase_config !== 'undefined') {
@@ -60,6 +60,37 @@ const getCollection = (colName) => {
 const getDocRef = (colName, docId) => {
   return doc(db, 'artifacts', APP_ID, 'public', 'data', colName, docId);
 };
+
+// [NEW] 계급 정렬 점수 함수
+const getRankScore = (rankString) => {
+  const scores = {
+    '원사': 100,
+    '준위': 95,
+    '상사': 90,
+    '중사': 80,
+    '하사': 70,
+    '군무원': 60, // 군무원 위치는 임의 설정 (간부급)
+    '병장': 40,
+    '상병': 30,
+    '일병': 20,
+    '이병': 10
+  };
+  return scores[rankString] || 0; // 목록에 없으면 0점
+};
+
+// [NEW] 데이터 정렬 함수 (계급 내림차순 -> 이름 오름차순)
+const sortDataByRank = (data) => {
+  return [...data].sort((a, b) => {
+    const scoreA = getRankScore(a.rank);
+    const scoreB = getRankScore(b.rank);
+    if (scoreA !== scoreB) {
+      return scoreB - scoreA; // 점수 높은 순(계급 높은 순)
+    }
+    // 계급이 같으면 이름 가나다순
+    return (a.name || '').localeCompare(b.name || '');
+  });
+};
+
 
 // [NEW] 클라이언트 정보 수집 함수
 const collectClientInfo = async () => {
@@ -433,8 +464,11 @@ const HistoryModal = ({ onClose, user }) => {
         const today = new Date().toLocaleDateString();
         const appSnap = await getDocs(getCollection("applicants"));
         const pkgSnap = await getDocs(getCollection("packages"));
-        const prevApplicants = appSnap.docs.map(d => d.data());
+        let prevApplicants = appSnap.docs.map(d => d.data());
         
+        // [NEW] 저장 시 계급순 정렬 (원사 -> 이병)
+        prevApplicants = sortDataByRank(prevApplicants);
+
         const crewSnap = await getDoc(getDocRef("settings", "crew"));
         let driver = {name:'', rank:'일병'}, nco = {name:'', rank:'하사'};
         if (crewSnap.exists()) { driver = crewSnap.data().driver; nco = crewSnap.data().nco; }
@@ -541,7 +575,13 @@ const CrewModal = ({ onClose, user }) => {
 
 // 6. 택배 수령 신청 모달
 const PackageModal = ({ onClose, onSuccess, user }) => {
-    const [form, setForm] = useState({ name: '', rank: '이병', count: 1, pin: '' });
+    // [MODIFIED] 로컬 스토리지에서 초기값 불러오기
+    const [form, setForm] = useState({ 
+        name: localStorage.getItem('userName') || '', 
+        rank: localStorage.getItem('userRank') || '이병', 
+        count: 1, 
+        pin: '' 
+    });
     const ranks = ['이병', '일병', '상병', '병장'];
 
     const handleSubmit = async (e) => {
@@ -552,6 +592,10 @@ const PackageModal = ({ onClose, onSuccess, user }) => {
         try {
             // [NEW] 접속 정보 수집
             const meta = await collectClientInfo();
+
+            // [MODIFIED] 로컬 스토리지에 이름과 계급 저장 (다음 방문 시 자동 입력)
+            localStorage.setItem('userName', form.name);
+            localStorage.setItem('userRank', form.rank);
 
             await addDoc(getCollection("packages"), {
                 name: form.name,
@@ -638,8 +682,9 @@ export default function App() {
   const [editingType, setEditingType] = useState(null); 
   const [editData, setEditData] = useState({}); 
 
-  const [name, setName] = useState('');
-  const [rank, setRank] = useState('이병');
+  // [MODIFIED] 로컬 스토리지에서 초기값 불러오기
+  const [name, setName] = useState(() => localStorage.getItem('userName') || '');
+  const [rank, setRank] = useState(() => localStorage.getItem('userRank') || '이병');
   const [pin, setPin] = useState('');
   
   const [applicants, setApplicants] = useState([]);
@@ -660,6 +705,7 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
+        // 사용자 제공 코드로 인증 (signInWithCustomToken 우선)
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
            await signInWithCustomToken(auth, __initial_auth_token);
         } else {
@@ -688,13 +734,20 @@ export default function App() {
   useEffect(() => {
     if (!db) return;
 
+    // [NEW] 데이터를 가져온 후 sortDataByRank 함수로 정렬 (Firestore는 단순 시간순 정렬로 가져옴)
     const unsub1 = onSnapshot(query(getCollection("applicants"), orderBy("timestamp", "asc")), 
-        (snap) => setApplicants(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
+        (snap) => {
+            const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setApplicants(sortDataByRank(data)); // 클라이언트 사이드에서 계급 정렬 적용
+        }, 
         (err) => console.error("Applicants load error:", err)
     );
     
     const unsub2 = onSnapshot(query(getCollection("packages"), orderBy("timestamp", "asc")), 
-        (snap) => setPackages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), 
+        (snap) => {
+            const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setPackages(sortDataByRank(data)); // 클라이언트 사이드에서 계급 정렬 적용
+        }, 
         (err) => console.error("Packages load error:", err)
     );
 
@@ -729,12 +782,18 @@ export default function App() {
         // [NEW] 접속 정보 수집
         const meta = await collectClientInfo();
 
+        // [MODIFIED] 로컬 스토리지에 이름과 계급 저장 (다음 방문 시 자동 입력)
+        localStorage.setItem('userName', name);
+        localStorage.setItem('userRank', rank);
+
         await addDoc(getCollection("applicants"), {
             name, rank, pin,
             time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
             timestamp: serverTimestamp(),
             meta: meta // 메타 데이터 저장
         });
+        
+        // 입력 필드 초기화 (단, 로컬스토리지에는 값이 저장되어 있어 새로고침 시 다시 불러옴)
         setName(''); setPin('');
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
     } catch(e) { alert("신청 실패: " + e.message); }
